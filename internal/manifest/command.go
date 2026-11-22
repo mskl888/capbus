@@ -2,7 +2,10 @@ package manifest
 
 import (
 	"fmt"
+	"os"
 	"strings"
+
+	"github.com/capbus/capbus/internal/secret"
 )
 
 // Command resolves the manifest's source into a concrete process to spawn.
@@ -31,6 +34,30 @@ func (m *Manifest) EnvList() []string {
 		out = append(out, k+"="+v)
 	}
 	return out
+}
+
+// ResolveEnv returns the complete environment a capability process should get:
+// the inherited environment, the manifest's static env, and every secret it
+// declares. Secrets come from the encrypted store, so no agent config ever
+// holds a credential.
+func (m *Manifest) ResolveEnv() ([]string, error) {
+	env := append(os.Environ(), m.EnvList()...)
+	if len(m.Permissions.Secrets) == 0 {
+		return env, nil
+	}
+	st, err := secret.Open()
+	if err != nil {
+		return nil, err
+	}
+	vals, missing, err := st.Resolve(m.Permissions.Secrets)
+	if err != nil {
+		return nil, err
+	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("%s: missing secret(s) %s — set with `capbus secret set <NAME>`",
+			m.Name, strings.Join(missing, ", "))
+	}
+	return append(env, secret.EnvList(vals)...), nil
 }
 
 // Executable returns a runnable path for the capability, used by doctor output.

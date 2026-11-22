@@ -46,7 +46,34 @@ Agent B ──stdio──► capbus bridge github ──┘         （唯一的
 
 ---
 
-## 不做什么
+## 凭据：存一次，任何 Agent 配置里都不出现
+
+一个 token 被复制进四个 Agent 的配置，是这类工具最真实的危险——它会出现在你的截图里、备份里、`git add` 里，以及某个 Agent 读进去的上下文里。
+
+```bash
+echo "$GITHUB_TOKEN" | capbus secret set GITHUB_TOKEN    # 加密存一次
+capbus secret list                                       # 只显示名字和时间
+```
+
+之后，能力在启动的那一刻由 capbus 注入环境变量，**Agent 的配置文件里只有 `capbus exec <name>`，没有任何密钥**：
+
+```json
+{
+  "mcpServers": {
+    "github": { "command": "/usr/local/bin/capbus", "args": ["exec", "github"] }
+  }
+}
+```
+
+丢失的密钥不会变成空字符串——它会明确失败并告诉你怎么补：
+
+```
+capbus exec: github: missing secret(s) GITHUB_TOKEN — set with `capbus secret set <NAME>`
+```
+
+**威胁模型，说清楚**：主密钥就在同一台机器上（`~/.capbus/master.key`，或 `CAPBUS_MASTER_KEY` 环境变量），所以以你的用户身份运行的进程能读到它。它防的是**凭据扩散**——四处复制、误提交、截图、被 Agent 读进上下文。它**不防**以你身份运行的恶意软件，也不是 Vault。要更强，就把主密钥放进系统钥匙串或你的 shell profile，别和密文放一起。
+
+
 
 边界比功能重要。capbus **明确不做**：
 
@@ -89,10 +116,12 @@ Agent B ──stdio──► capbus bridge github ──┘         （唯一的
 | `capbus down` | 停止 supervisor 及其子进程 |
 | `capbus sync [--shared] [--dry-run]` | 写进各 Agent 配置；`--shared` 指向共享后端 |
 | `capbus bridge <name>` | stdio 转发壳（由 Agent 调用，你不要手动跑） |
+| `capbus exec <name>` | 以子进程方式运行一个能力，并注入它的密钥 |
+| `capbus secret list/set/get/rm` | 管理加密的凭据库 |
 
 支持的 Agent（`mcpServers` 方言）：**Claude Code、Cursor**。
 
-尚未实现：Codex（TOML）与 DSH 适配器、`capbus install`（远端安装）、`capbus diff`（配置漂移）、Secret Broker（凭据集中）。
+尚未实现：Codex（TOML）与 DSH 适配器、`capbus install`（远端安装）、`capbus diff`（配置漂移）、`workspace` 作用域的进程托管。
 
 ---
 

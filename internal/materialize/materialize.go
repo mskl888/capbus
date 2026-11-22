@@ -84,15 +84,14 @@ func selfExe() string {
 	return "capbus"
 }
 
-func toEntry(m manifest.Manifest, opts Options, exe string) (entry, error) {
+// toEntry always produces a capbus shim rather than the capability's own
+// command. That keeps credentials out of agent configs entirely: the shim
+// resolves secrets at spawn time, in memory.
+func toEntry(m manifest.Manifest, opts Options, exe string) entry {
 	if opts.Shared && m.Scope == manifest.ScopeGlobal {
-		return entry{Command: exe, Args: []string{"bridge", m.Name}}, nil
+		return entry{Command: exe, Args: []string{"bridge", m.Name}}
 	}
-	name, args, err := m.Command()
-	if err != nil {
-		return entry{}, err
-	}
-	return entry{Command: name, Args: args}, nil
+	return entry{Command: exe, Args: []string{"exec", m.Name}}
 }
 
 // Render produces the config body for one agent. Existing keys in the config
@@ -102,11 +101,7 @@ func Render(a Agent, ms []manifest.Manifest, opts Options) ([]byte, error) {
 	exe := selfExe()
 	servers := map[string]entry{}
 	for _, m := range ms {
-		e, err := toEntry(m, opts, exe)
-		if err != nil {
-			return nil, err
-		}
-		servers[m.Name] = e
+		servers[m.Name] = toEntry(m, opts, exe)
 	}
 
 	root := map[string]any{}

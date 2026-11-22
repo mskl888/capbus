@@ -3,24 +3,28 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/capbus/capbus/internal/manifest"
 	"github.com/capbus/capbus/internal/materialize"
 	"github.com/capbus/capbus/internal/registry"
+	"github.com/capbus/capbus/internal/secret"
 	"github.com/capbus/capbus/internal/supervise"
 )
 
-const version = "0.2.0-dev"
+const version = "0.3.0-dev"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -42,6 +46,10 @@ func main() {
 		os.Exit(downCmd())
 	case "bridge":
 		os.Exit(bridgeCmd(os.Args[2:]))
+	case "exec":
+		os.Exit(execCmd(os.Args[2:]))
+	case "secret":
+		os.Exit(secretCmd(os.Args[2:]))
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -61,6 +69,8 @@ usage:
   capbus supervise           run one shared backend per global capability
   capbus down                stop a running supervisor
   capbus bridge <name>       stdio shim used by agents (called by them)
+  capbus exec <name>         run one capability with secrets injected
+  capbus secret <cmd>        manage credentials: list|set|get|rm
   capbus version
 
   --shared  point global capabilities at the shared backend instead of
@@ -102,6 +112,39 @@ func doctor() int {
 			ok = false
 		}
 		fmt.Printf("  %-16s %-8s %s\n", a.Name(), status, p)
+	}
+
+	fmt.Println("\nsecrets")
+	if st, err := secret.Open(); err != nil {
+		fmt.Printf("  ! %v\n", err)
+		ok = false
+	} else {
+		infos, lerr := st.List()
+		switch {
+		case lerr != nil:
+			fmt.Printf("  ! %v\n", lerr)
+			ok = false
+		case len(infos) == 0:
+			fmt.Println("  none stored")
+		default:
+			fmt.Printf("  %d stored\n", len(infos))
+			all, _ := registry.Load()
+			for _, m := range all {
+				if len(m.Permissions.Secrets) == 0 {
+					continue
+				}
+				_, missing, rerr := st.Resolve(m.Permissions.Secrets)
+				if rerr != nil {
+					fmt.Printf("  ! %s: %v\n", m.Name, rerr)
+					ok = false
+					continue
+				}
+				if len(missing) > 0 {
+					fmt.Printf("  ! %s needs %s (missing)\n", m.Name, strings.Join(missing, ", "))
+					ok = false
+				}
+			}
+		}
 	}
 
 	fmt.Println("\nsupervisor")
@@ -347,4 +390,160 @@ func bridgeCmd(args []string) int {
 	}
 	conn.Close()
 	return 0
+}
+
+// execCmd runs one capability as the agent's child process, with its secrets
+// injected into the environment. Agent configs stay credential-free.
+func execCmd(args []string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: capbus exec <capability>")
+		return 2
+	}
+	name := args[0]
+
+	ms, errs := registry.Load()
+	for _, e := range errs {
+		fmt.Fprintf(os.Stderr, "! %v\n", e)
+	}
+	var spec *manifest.Manifest
+	for i := range ms {
+		if ms[i].Name == name {
+			spec = &ms[i]
+			break
+		}
+	}
+	if spec == nil {
+		fmt.Fprintf(os.Stderr, "capbus exec: no capability named %q\n", name)
+		return 1
+	}
+
+	bin, binArgs, err := spec.Command()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "capbus exec: %v\n", err)
+		return 1
+	}
+	env, err := spec.ResolveEnv()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "capbus exec: %v\n", err)
+		return 1
+	}
+
+	cmd := exec.Command(bin, binArgs...)
+	cmd.Env = env
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if err := cmd.Run(); err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			return ee.ExitCode()
+		}
+		fmt.Fprintf(os.Stderr, "capbus exec: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func usageSecret() {
+	fmt.Fprint(os.Stderr, `usage:
+  capbus secret list
+  capbus secret set NAME [--from-file PATH]   (value is read from stdin)
+  capbus secret get NAME                      (prints the value)
+  capbus secret rm NAME
+`)
+}
+
+// secretCmd manages the encrypted credential store.
+func secretCmd(args []string) int {
+	if len(args) == 0 {
+		usageSecret()
+		return 2
+	}
+	st, err := secret.Open()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "capbus secret: %v\n", err)
+		return 1
+	}
+
+	switch args[0] {
+	case "list":
+		infos, err := st.List()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "capbus secret: %v\n", err)
+			return 1
+		}
+		if len(infos) == 0 {
+			fmt.Println("no secrets stored")
+			return 0
+		}
+		fmt.Printf("%-28s %s\n", "NAME", "UPDATED")
+		for _, i := range infos {
+			fmt.Printf("%-28s %s\n", i.Name, i.Updated.Format("2006-01-02 15:04"))
+		}
+		return 0
+
+	case "set":
+		if len(args) < 2 {
+			usageSecret()
+			return 2
+		}
+		name := args[1]
+		var value string
+		if len(args) >= 4 && args[2] == "--from-file" {
+			b, err := os.ReadFile(args[3])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "capbus secret: %v\n", err)
+				return 1
+			}
+			value = strings.TrimRight(string(b), "\r\n")
+		} else {
+			b, err := io.ReadAll(os.Stdin)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "capbus secret: %v\n", err)
+				return 1
+			}
+			value = strings.TrimRight(string(b), "\r\n")
+		}
+		if value == "" {
+			fmt.Fprintln(os.Stderr, "capbus secret set: empty value; pipe it in: `echo VALUE | capbus secret set NAME`")
+			return 2
+		}
+		if err := st.Set(name, value); err != nil {
+			fmt.Fprintf(os.Stderr, "capbus secret: %v\n", err)
+			return 1
+		}
+		fmt.Printf("stored %s\n", name)
+		return 0
+
+	case "get":
+		if len(args) < 2 {
+			usageSecret()
+			return 2
+		}
+		v, ok, err := st.Get(args[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "capbus secret: %v\n", err)
+			return 1
+		}
+		if !ok {
+			fmt.Fprintf(os.Stderr, "capbus secret: %q is not stored\n", args[1])
+			return 1
+		}
+		fmt.Println(v)
+		return 0
+
+	case "rm", "remove", "delete":
+		if len(args) < 2 {
+			usageSecret()
+			return 2
+		}
+		if err := st.Delete(args[1]); err != nil {
+			fmt.Fprintf(os.Stderr, "capbus secret: %v\n", err)
+			return 1
+		}
+		fmt.Printf("removed %s\n", args[1])
+		return 0
+
+	default:
+		usageSecret()
+		return 2
+	}
 }

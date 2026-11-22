@@ -411,7 +411,13 @@ func (b *backend) start() error {
 		return err
 	}
 	cmd := exec.Command(name, args...)
-	cmd.Env = append(os.Environ(), b.spec.EnvList()...)
+	// Secrets are injected here, at spawn time. Nothing on disk outside the
+	// encrypted store ever sees them.
+	env, err := b.spec.ResolveEnv()
+	if err != nil {
+		return err
+	}
+	cmd.Env = env
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err

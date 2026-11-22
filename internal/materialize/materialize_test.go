@@ -111,26 +111,22 @@ func TestSharedModeUsesBridge(t *testing.T) {
 	}
 }
 
-func TestToEntry(t *testing.T) {
-	cases := []struct {
-		src  manifest.Source
-		want string
-	}{
-		{manifest.Source{NPM: "pkg"}, "npx"},
-		{manifest.Source{OCI: "img"}, "docker"},
-		{manifest.Source{Command: "my-mcp"}, "my-mcp"},
-		{manifest.Source{Path: "/usr/bin/x"}, "/usr/bin/x"},
+func TestEntriesUseShims(t *testing.T) {
+	m := manifest.Manifest{
+		Name: "github", Kind: manifest.KindMCP, Scope: manifest.ScopeGlobal,
+		Source: manifest.Source{NPM: "@x/y"},
 	}
-	for _, c := range cases {
-		e, err := toEntry(manifest.Manifest{Name: "t", Source: c.src}, Options{}, "/x/capbus")
-		if err != nil {
-			t.Fatalf("%v: %v", c.src, err)
-		}
-		if e.Command != c.want {
-			t.Fatalf("%v: got %q want %q", c.src, e.Command, c.want)
-		}
+	if e := toEntry(m, Options{}, "/x/capbus"); e.Command != "/x/capbus" || len(e.Args) != 2 || e.Args[0] != "exec" {
+		t.Fatalf("non-shared mode must use the exec shim, got %+v", e)
 	}
-	if _, err := toEntry(manifest.Manifest{Name: "t", Source: manifest.Source{Git: "x"}}, Options{}, "/x/capbus"); err == nil {
-		t.Fatal("git source is unsupported and must error loudly")
+	if e := toEntry(m, Options{Shared: true}, "/x/capbus"); e.Args[0] != "bridge" {
+		t.Fatalf("shared mode must use the bridge shim, got %+v", e)
+	}
+
+	// A workspace-scoped capability holds live state, so it must never be
+	// pointed at the machine-wide shared backend.
+	ws := manifest.Manifest{Name: "browser", Kind: manifest.KindMCP, Scope: manifest.ScopeWorkspace, Stateful: true}
+	if e := toEntry(ws, Options{Shared: true}, "/x/capbus"); e.Args[0] != "exec" {
+		t.Fatalf("workspace-scoped capability must not use the shared bridge, got %+v", e)
 	}
 }
