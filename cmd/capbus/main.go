@@ -17,14 +17,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/capbus/capbus/internal/enabled"
 	"github.com/capbus/capbus/internal/importscan"
 	"github.com/capbus/capbus/internal/manifest"
 	"github.com/capbus/capbus/internal/materialize"
 	"github.com/capbus/capbus/internal/mcpserver"
+	"github.com/capbus/capbus/internal/probe"
 	"github.com/capbus/capbus/internal/proto"
 	"github.com/capbus/capbus/internal/registry"
 	"github.com/capbus/capbus/internal/secret"
 	"github.com/capbus/capbus/internal/supervise"
+	cost "github.com/capbus/capbus/internal/usage"
 	yaml "gopkg.in/yaml.v3"
 )
 
@@ -60,6 +63,14 @@ func main() {
 		os.Exit(initCmd())
 	case "import":
 		os.Exit(importCmd(os.Args[2:]))
+	case "enable":
+		os.Exit(toggleCmd(os.Args[2:], true))
+	case "disable":
+		os.Exit(toggleCmd(os.Args[2:], false))
+	case "use":
+		os.Exit(useCmd(os.Args[2:]))
+	case "cost":
+		os.Exit(costCmd(os.Args[2:]))
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -84,6 +95,9 @@ usage:
   capbus mcp                 run capbus as an MCP server (agents drive it)
   capbus init                setup check with the exact next steps
   capbus import [--dry-run]  adopt MCP servers already configured in any agent
+  capbus enable|disable <n>  switch one capability on or off
+  capbus use <all|default|name>  which capabilities get injected at all
+  capbus cost [--refresh]    measure what each capability costs per turn
   capbus version
 
   --shared  point global capabilities at the shared backend instead of
@@ -206,9 +220,14 @@ func list() int {
 		return 0
 	}
 	fmt.Printf("%-16s %-6s %-10s %-9s %s\n", "NAME", "KIND", "SCOPE", "STATEFUL", "SOURCE")
+	st, _ := enabled.Load()
 	for _, m := range ms {
-		fmt.Printf("%-16s %-6s %-10s %-9v %s\n",
-			m.Name, m.Kind, m.Scope, m.Stateful, sourceString(m))
+		mark := ""
+		if !st.IsEnabled(m.Name) {
+			mark = "   [off]"
+		}
+		fmt.Printf("%-16s %-6s %-10s %-9v %s%s\n",
+			m.Name, m.Kind, m.Scope, m.Stateful, sourceString(m), mark)
 	}
 	return 0
 }
@@ -255,6 +274,9 @@ func syncCmd(args []string) int {
 	for _, e := range errs {
 		fmt.Fprintf(os.Stderr, "! %v\n", e)
 	}
+	// A disabled capability is not written at all, so its tool schemas never
+	// reach a model's context. Filtering after writing would save nothing.
+	ms = enabled.Filter(ms)
 	wrote, syncErrs := materialize.Sync(ms, opts)
 	for _, e := range syncErrs {
 		fmt.Fprintf(os.Stderr, "! %v\n", e)
@@ -267,6 +289,24 @@ func syncCmd(args []string) int {
 	}
 	for _, w := range wrote {
 		fmt.Println("wrote " + w)
+	}
+	if len(ms) > 0 {
+		names := make([]string, 0, len(ms))
+		for _, m := range ms {
+			names = append(names, m.Name)
+		}
+		tokens, measured, missing := cost.Total(names)
+		fmt.Printf("\n%d capability(ies) injected", len(ms))
+		if measured > 0 {
+			fmt.Printf(", about %d tokens on every turn", tokens)
+		}
+		if missing > 0 {
+			fmt.Printf(" (%d unmeasured: run `capbus cost`)", missing)
+		}
+		fmt.Println()
+		if tokens > 20000 {
+			fmt.Println("that is a large slice of the context window: `capbus use <name>` narrows it")
+		}
 	}
 	if len(syncErrs) > 0 {
 		return 1
@@ -747,4 +787,178 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n-1] + "…"
+}
+
+// toggleCmd switches one capability on or off.
+func toggleCmd(args []string, on bool) int {
+	verb := "disable"
+	if on {
+		verb = "enable"
+	}
+	if len(args) != 1 {
+		fmt.Fprintf(os.Stderr, "usage: capbus %s <capability>\n", verb)
+		return 2
+	}
+	name := args[0]
+
+	ms, _ := registry.Load()
+	found := false
+	for _, m := range ms {
+		if m.Name == name {
+			found = true
+			break
+		}
+	}
+	if !found {
+		fmt.Fprintf(os.Stderr, "no capability named %q — run `capbus list`\n", name)
+		return 1
+	}
+
+	st, err := enabled.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "capbus %s: %v\n", verb, err)
+		return 1
+	}
+	st.Set(name, on)
+	if err := st.Save(); err != nil {
+		fmt.Fprintf(os.Stderr, "capbus %s: %v\n", verb, err)
+		return 1
+	}
+	if on {
+		fmt.Printf("%s is on; run `capbus sync` to write it into your agents\n", name)
+	} else {
+		fmt.Printf("%s is off — it will not be written into any agent.\nrun `capbus sync` to remove it from the configs that already have it\n", name)
+	}
+	return 0
+}
+
+// useCmd switches a whole set at once: everything, only the always-on ones, or
+// exactly one capability.
+func useCmd(args []string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: capbus use <all|default|capability>")
+		return 2
+	}
+	ms, errs := registry.Load()
+	for _, e := range errs {
+		fmt.Fprintf(os.Stderr, "! %v\n", e)
+	}
+	st, err := enabled.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "capbus use: %v\n", err)
+		return 1
+	}
+
+	switch args[0] {
+	case "all":
+		st.Disabled = nil
+	case "default":
+		var disabled []string
+		always := 0
+		for _, m := range ms {
+			if m.Always {
+				always++
+				continue
+			}
+			disabled = append(disabled, m.Name)
+		}
+		st.Disabled = disabled
+		if always == 0 && len(ms) > 0 {
+			fmt.Println("note: no capability is marked `always: true`, so default mode switches everything off")
+		}
+	default:
+		name := args[0]
+		found := false
+		var disabled []string
+		for _, m := range ms {
+			if m.Name == name {
+				found = true
+				continue
+			}
+			if m.Always {
+				continue
+			}
+			disabled = append(disabled, m.Name)
+		}
+		if !found {
+			fmt.Fprintf(os.Stderr, "no capability named %q — run `capbus list`\n", name)
+			return 1
+		}
+		st.Disabled = disabled
+	}
+
+	if err := st.Save(); err != nil {
+		fmt.Fprintf(os.Stderr, "capbus use: %v\n", err)
+		return 1
+	}
+
+	injected := enabled.Filter(ms)
+	fmt.Printf("%d of %d capability(ies) will be injected\n", len(injected), len(ms))
+	names := make([]string, 0, len(injected))
+	for _, m := range injected {
+		names = append(names, m.Name)
+	}
+	if tokens, measured, missing := cost.Total(names); measured > 0 {
+		fmt.Printf("about %d tokens on every turn", tokens)
+		if missing > 0 {
+			fmt.Printf(" (%d unmeasured)", missing)
+		}
+		fmt.Println()
+	}
+	fmt.Println("\nrun `capbus sync` to apply")
+	return 0
+}
+
+// costCmd measures what each capability costs the model per turn.
+func costCmd(args []string) int {
+	refresh := false
+	for _, a := range args {
+		switch a {
+		case "--refresh", "-r":
+			refresh = true
+		default:
+			fmt.Fprintf(os.Stderr, "capbus cost: unknown flag %q\n", a)
+			return 2
+		}
+	}
+
+	ms, _ := registry.Load()
+	if len(ms) == 0 {
+		fmt.Println("no capabilities declared")
+		return 0
+	}
+	st, _ := enabled.Load()
+
+	fmt.Printf("%-22s %6s %9s %8s  %s\n", "NAME", "TOOLS", "BYTES", "TOKENS", "STATE")
+	var total, measured, failed int
+	for _, m := range ms {
+		c, cached := cost.Get(m.Name)
+		if refresh || !cached {
+			r, err := probe.Measure(m, 120*time.Second)
+			if err != nil {
+				fmt.Printf("%-22s %6s %9s %8s  %s\n", m.Name, "?", "?", "?", "probe failed: "+truncate(err.Error(), 40))
+				failed++
+				continue
+			}
+			c = cost.Cost{Tools: r.Tools, Bytes: r.Bytes, Tokens: cost.EstimateTokens(r.Bytes), MeasuredAt: time.Now()}
+			_ = cost.Put(m.Name, c)
+		}
+		state := "on"
+		if !st.IsEnabled(m.Name) {
+			state = "off"
+		}
+		fmt.Printf("%-22s %6d %9d %8d  %s\n", m.Name, c.Tools, c.Bytes, c.Tokens, state)
+		total += c.Tokens
+		measured++
+	}
+
+	fmt.Printf("\n~%d tokens on every turn, over %d measured", total, measured)
+	if failed > 0 {
+		fmt.Printf(" (+%d failed to probe)", failed)
+	}
+	fmt.Println()
+	if total > 20000 {
+		fmt.Println("that is a large slice of the context window: `capbus use <name>` narrows it")
+	}
+	return 0
 }

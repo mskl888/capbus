@@ -60,7 +60,10 @@ type Manifest struct {
 	// Stateful marks capabilities that hold a live session (a browser, a
 	// desktop, a shell). A stateful capability must never be global: two
 	// agents sharing one browser session will fight over it.
-	Stateful    bool        `yaml:"stateful,omitempty"`
+	Stateful bool `yaml:"stateful,omitempty"`
+	// Always keeps a capability switched on in "default" mode: the ones you
+	// want available whatever else is turned off.
+	Always      bool        `yaml:"always,omitempty"`
 	Placement   string      `yaml:"placement,omitempty"` // host | workspace
 	Source      Source      `yaml:"source"`
 	Permissions Permissions `yaml:"permissions,omitempty"`

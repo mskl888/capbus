@@ -16,6 +16,7 @@ import (
 
 	yaml "gopkg.in/yaml.v3"
 
+	"github.com/capbus/capbus/internal/enabled"
 	"github.com/capbus/capbus/internal/manifest"
 	"github.com/capbus/capbus/internal/materialize"
 	"github.com/capbus/capbus/internal/proto"
@@ -171,7 +172,7 @@ func (s *Server) sync(shared bool) (string, bool) {
 				"or call capbus_sync with shared=false.", false
 		}
 	}
-	wrote, syncErrs := materialize.Sync(ms, materialize.Options{Shared: shared})
+	wrote, syncErrs := materialize.Sync(enabled.Filter(ms), materialize.Options{Shared: shared})
 	var b strings.Builder
 	for _, w := range wrote {
 		b.WriteString("wrote " + w + "\n")
