@@ -1,7 +1,7 @@
 // Package mcpserver exposes capbus itself as an MCP server.
 //
 // An agent that has capbus attached can enumerate, register and materialise
-// capabilities by calling tools — no shell, no YAML editing, no guessing at
+// capabilities by calling tools - no shell, no YAML editing, no guessing at
 // file paths. The tool descriptions are deliberately written as instructions:
 // for an MCP client they *are* the documentation.
 package mcpserver

@@ -3,7 +3,7 @@
 //
 // Threat model, stated plainly: the master key lives on the same machine, so a
 // process running as your user can read it. This protects against credential
-// sprawl — the same token copied into four agent configs, committed by accident,
+// sprawl - the same token copied into four agent configs, committed by accident,
 // pasted into a chat, or slurped into an LLM context. It does not protect
 // against malware running as you, and it is not a vault.
 package secret

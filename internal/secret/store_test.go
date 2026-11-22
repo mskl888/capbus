@@ -49,7 +49,7 @@ func TestValueIsNotOnDiskInPlaintext(t *testing.T) {
 	if strings.Contains(string(b), "GITHUB_TOKEN") {
 		// Names leak as well; that is acceptable, but worth knowing. Assert the
 		// behaviour so a future change has to think about it.
-		t.Log("note: secret names are encrypted too — good")
+		t.Log("note: secret names are encrypted too - good")
 	}
 }
 

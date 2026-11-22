@@ -120,21 +120,21 @@ func checkNatives(natives []importscan.Native, declared map[string]bool) []Findi
 		switch {
 		case n.Broken:
 			if already {
-				duplicates = append(duplicates, label+" — also declared in capbus; the agent still loads its own copy")
+				duplicates = append(duplicates, label+" - also declared in capbus; the agent still loads its own copy")
 			} else {
-				unreadable = append(unreadable, label+" — its bundle could not be read")
+				unreadable = append(unreadable, label+" - its bundle could not be read")
 			}
 		case n.Resolved && !already:
 			unmanaged = append(unmanaged, label)
 		case already:
 			// Declared in capbus *and* installed in the agent. The native copy
 			// is what actually runs, so the capbus switch does nothing yet.
-			duplicates = append(duplicates, label+" — also declared in capbus; the agent still loads its own copy")
+			duplicates = append(duplicates, label+" - also declared in capbus; the agent still loads its own copy")
 		default:
 			// Present, but its launch command is computed at runtime. It may
 			// still be adoptable through a state file; only complain when the
 			// name is unknown to capbus.
-			unreadable = append(unreadable, label+" — launch command is computed, no plain command to copy")
+			unreadable = append(unreadable, label+" - launch command is computed, no plain command to copy")
 		}
 	}
 
@@ -243,7 +243,7 @@ func checkStateful(ms []manifest.Manifest) []Finding {
 		Severity: High,
 		Title:    fmt.Sprintf("%d shared capability(ies) look stateful", len(items)),
 		Detail: "Two agents driving one live session overwrite each other's target, cursor or open document, " +
-			"and nothing reports an error. Isolation — one process per agent — is the fix, not a lock.",
+			"and nothing reports an error. Isolation - one process per agent - is the fix, not a lock.",
 		Fix:   "re-declare with scope: workspace, then capbus sync",
 		Items: items,
 	}}
@@ -255,7 +255,7 @@ func checkRuntimes(ms []manifest.Manifest) []Finding {
 	for _, m := range ms {
 		bin, _, err := m.Command()
 		if err != nil {
-			items = append(items, m.Name+" — "+err.Error())
+			items = append(items, m.Name+" - "+err.Error())
 			continue
 		}
 		if _, err := exec.LookPath(bin); err != nil {

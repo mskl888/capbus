@@ -68,7 +68,7 @@ type backend struct {
 	started time.Time
 
 	// closed stops the restart loop. Without it, Close() kills the child and
-	// run() immediately spawns another one — an unstoppable supervisor.
+	// run() immediately spawns another one - an unstoppable supervisor.
 	closed    chan struct{}
 	closeOnce sync.Once
 }

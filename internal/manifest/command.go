@@ -64,7 +64,7 @@ func (m *Manifest) ResolveEnv() ([]string, error) {
 			return nil, err
 		}
 		if len(missing) > 0 {
-			return nil, fmt.Errorf("%s: missing secret(s) %s — set with `capbus secret set <NAME>`",
+			return nil, fmt.Errorf("%s: missing secret(s) %s - set with `capbus secret set <NAME>`",
 				m.Name, strings.Join(missing, ", "))
 		}
 		for k, v := range vals {

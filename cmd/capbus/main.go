@@ -84,7 +84,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `capbus — 装一次，所有 Agent 都会用
+	fmt.Fprint(os.Stderr, `capbus - declare once, every agent gets it
 
 usage:
   capbus doctor              check environment, agents and capability sources
@@ -287,7 +287,7 @@ func syncCmd(args []string) int {
 	}
 	if len(wrote) == 0 {
 		if len(syncErrs) == 0 {
-			fmt.Println("no agent config found — install an agent, or run `capbus doctor`")
+			fmt.Println("no agent config found - install an agent, or run `capbus doctor`")
 		}
 		return 1
 	}
@@ -619,7 +619,7 @@ func mcpCmd() int {
 // initCmd is the "what do I do next" command: it inspects this machine and
 // prints only the steps that are actually missing.
 func initCmd() int {
-	fmt.Printf("capbus %s — setup check\n\n", version)
+	fmt.Printf("capbus %s - setup check\n\n", version)
 
 	dir := registry.Dir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -790,7 +790,7 @@ func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n-1] + "…"
+	return s[:n-1] + "..."
 }
 
 // scanCmd prints a read-only diagnosis. It changes nothing, on purpose: the
@@ -798,7 +798,7 @@ func truncate(s string, n int) string {
 func scanCmd() int {
 	rep := scan.Run()
 
-	fmt.Println("capbus scan — read only, nothing has been changed")
+	fmt.Println("capbus scan - read only, nothing has been changed")
 	fmt.Println()
 	fmt.Printf("%d plugin package(s) in agent profiles, %d resolvable MCP server(s) among them\n",
 		len(rep.Packages), rep.ResolvedNatives())
@@ -850,7 +850,7 @@ func toggleCmd(args []string, on bool) int {
 		}
 	}
 	if !found {
-		fmt.Fprintf(os.Stderr, "no capability named %q — run `capbus list`\n", name)
+		fmt.Fprintf(os.Stderr, "no capability named %q - run `capbus list`\n", name)
 		return 1
 	}
 
@@ -867,7 +867,7 @@ func toggleCmd(args []string, on bool) int {
 	if on {
 		fmt.Printf("%s is on; run `capbus sync` to write it into your agents\n", name)
 	} else {
-		fmt.Printf("%s is off — it will not be written into any agent.\nrun `capbus sync` to remove it from the configs that already have it\n", name)
+		fmt.Printf("%s is off - it will not be written into any agent.\nrun `capbus sync` to remove it from the configs that already have it\n", name)
 	}
 	return 0
 }
@@ -921,7 +921,7 @@ func useCmd(args []string) int {
 			disabled = append(disabled, m.Name)
 		}
 		if !found {
-			fmt.Fprintf(os.Stderr, "no capability named %q — run `capbus list`\n", name)
+			fmt.Fprintf(os.Stderr, "no capability named %q - run `capbus list`\n", name)
 			return 1
 		}
 		st.Disabled = disabled
