@@ -82,6 +82,7 @@ func Run() Report {
 	}
 
 	rep.Findings = append(rep.Findings, checkNatives(rep.Natives, declared)...)
+	rep.Findings = append(rep.Findings, checkStateful(ms)...)
 	rep.Findings = append(rep.Findings, checkRuntimes(on)...)
 	rep.Findings = append(rep.Findings, checkSecrets(on)...)
 	rep.Findings = append(rep.Findings, checkStale(declared)...)
@@ -187,6 +188,65 @@ func declaredAs(n importscan.Native, declared map[string]bool) bool {
 		return true
 	}
 	return declared[strings.TrimPrefix(n.Plugin, "dsh-")]
+}
+
+// statefulMarkers are tool-name fragments that suggest a server keeps a live
+// session. Two or more distinct hits is treated as evidence.
+var statefulMarkers = []string{
+	"session", "target", "current", "attach",
+	"mode", "begin", "commit", "lock", "acquire", "release",
+}
+
+// statefulScore counts how many distinct markers appear across the tool names.
+func statefulScore(names []string) (int, []string) {
+	seen := map[string]bool{}
+	var hits []string
+	for _, n := range names {
+		l := strings.ToLower(n)
+		for _, m := range statefulMarkers {
+			if !seen[m] && strings.Contains(l, m) {
+				seen[m] = true
+				hits = append(hits, m)
+			}
+		}
+	}
+	sort.Strings(hits)
+	return len(hits), hits
+}
+
+// checkStateful reports capabilities that look like they hold live state but
+// are shared machine-wide. Two agents would silently overwrite each other's
+// target or open document; no error is raised, which is what makes it worse
+// than a crash.
+func checkStateful(ms []manifest.Manifest) []Finding {
+	var items []string
+	for _, m := range ms {
+		if m.Scope != manifest.ScopeGlobal || m.Stateful {
+			continue
+		}
+		c, ok := usage.Get(m.Name)
+		if !ok {
+			continue // unmeasured: no evidence, so no claim
+		}
+		score, hits := statefulScore(c.ToolNames)
+		if score < 2 {
+			continue
+		}
+		items = append(items, fmt.Sprintf("%s exposes %s-style tools but is declared scope: global",
+			m.Name, strings.Join(hits, "/")))
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	return []Finding{{
+		ID:       "stateful-global",
+		Severity: High,
+		Title:    fmt.Sprintf("%d shared capability(ies) look stateful", len(items)),
+		Detail: "Two agents driving one live session overwrite each other's target, cursor or open document, " +
+			"and nothing reports an error. Isolation — one process per agent — is the fix, not a lock.",
+		Fix:   "re-declare with scope: workspace, then capbus sync",
+		Items: items,
+	}}
 }
 
 // checkRuntimes reports enabled capabilities whose command does not exist.

@@ -17,6 +17,11 @@ import (
 type Result struct {
 	Tools int
 	Bytes int
+	// Names are the tool names the server advertises. They are kept because
+	// they are the only cheap evidence of whether a server holds live state
+	// (names like session_open or target_select), and because the panel needs
+	// them to show a user what to ask for.
+	Names []string
 }
 
 // Measure performs a full handshake and tools/list, then stops the process.
@@ -79,10 +84,16 @@ func Measure(m manifest.Manifest, timeout time.Duration) (Result, error) {
 				_ = wr.Write(proto.Request(2, "tools/list", "{}"))
 			case "2":
 				var payload struct {
-					Tools []json.RawMessage `json:"tools"`
+					Tools []struct {
+						Name string `json:"name"`
+					} `json:"tools"`
 				}
 				_ = json.Unmarshal(msg.Result, &payload)
-				ch <- outcome{r: Result{Tools: len(payload.Tools), Bytes: len(msg.Result)}}
+				names := make([]string, 0, len(payload.Tools))
+				for _, t := range payload.Tools {
+					names = append(names, t.Name)
+				}
+				ch <- outcome{r: Result{Tools: len(payload.Tools), Bytes: len(msg.Result), Names: names}}
 				return
 			}
 		}

@@ -45,3 +45,33 @@ func TestFindingsAreSortedBySeverity(t *testing.T) {
 		}
 	}
 }
+
+// craft-anything's own tool names are the evidence: it holds a target and a
+// session, so sharing one instance across agents corrupts both.
+func TestStatefulScoreOnSessionTools(t *testing.T) {
+	names := []string{
+		"core_target_close", "core_session_show", "core_targets_list",
+		"core_target_select", "core_evidence_show", "core_unknowns_show",
+	}
+	score, hits := statefulScore(names)
+	if score < 2 {
+		t.Fatalf("expected stateful evidence, got %d %v", score, hits)
+	}
+}
+
+// A plain file server must not be flagged, or the warning becomes noise.
+func TestStatefulScoreOnStatelessTools(t *testing.T) {
+	names := []string{"read_file", "write_file", "list_directory", "search_files", "move_file"}
+	score, _ := statefulScore(names)
+	if score >= 2 {
+		t.Fatalf("false positive, score %d", score)
+	}
+}
+
+// One incidental marker is not evidence.
+func TestSingleMarkerIsNotEnough(t *testing.T) {
+	score, _ := statefulScore([]string{"current_time", "get_weather"})
+	if score >= 2 {
+		t.Fatalf("one marker should not trip the threshold, got %d", score)
+	}
+}

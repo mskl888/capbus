@@ -980,7 +980,13 @@ func costCmd(args []string) int {
 				failed++
 				continue
 			}
-			c = cost.Cost{Tools: r.Tools, Bytes: r.Bytes, Tokens: cost.EstimateTokens(r.Bytes), MeasuredAt: time.Now()}
+			c = cost.Cost{
+				Tools:      r.Tools,
+				Bytes:      r.Bytes,
+				Tokens:     cost.EstimateTokens(r.Bytes),
+				MeasuredAt: time.Now(),
+				ToolNames:  r.Names,
+			}
 			_ = cost.Put(m.Name, c)
 		}
 		state := "on"

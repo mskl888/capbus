@@ -20,6 +20,9 @@ type Cost struct {
 	Bytes      int       `json:"bytes"`
 	Tokens     int       `json:"tokens"`
 	MeasuredAt time.Time `json:"measured_at"`
+	// ToolNames are the tools the server advertised when measured. They are the
+	// evidence used to decide whether a capability holds live state.
+	ToolNames []string `json:"tool_names,omitempty"`
 }
 
 type file struct {
