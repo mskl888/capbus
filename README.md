@@ -9,6 +9,8 @@ capbus supervise            # 一个后端，机器上只跑一份
 capbus sync --shared        # 所有 Agent 指向它
 ```
 
+**第一次用 → [5 分钟上手](docs/QUICKSTART.md)** ｜ **想让 AI 自己管 → [给 AI 用](docs/AI.md)**
+
 ---
 
 ## 它解决什么
@@ -118,6 +120,8 @@ capbus exec: github: missing secret(s) GITHUB_TOKEN — set with `capbus secret 
 | `capbus bridge <name>` | stdio 转发壳（由 Agent 调用，你不要手动跑） |
 | `capbus exec <name>` | 以子进程方式运行一个能力，并注入它的密钥 |
 | `capbus secret list/set/get/rm` | 管理加密的凭据库 |
+| `capbus mcp` | 把 capbus 自己作为 MCP server 跑起来，Agent 用工具调用管理能力 |
+| `capbus init` | 检查状态，只输出你真正缺的那几步 |
 
 支持的 Agent：
 

@@ -19,6 +19,8 @@ import (
 
 	"github.com/capbus/capbus/internal/manifest"
 	"github.com/capbus/capbus/internal/materialize"
+	"github.com/capbus/capbus/internal/mcpserver"
+	"github.com/capbus/capbus/internal/proto"
 	"github.com/capbus/capbus/internal/registry"
 	"github.com/capbus/capbus/internal/secret"
 	"github.com/capbus/capbus/internal/supervise"
@@ -50,6 +52,10 @@ func main() {
 		os.Exit(execCmd(os.Args[2:]))
 	case "secret":
 		os.Exit(secretCmd(os.Args[2:]))
+	case "mcp":
+		os.Exit(mcpCmd())
+	case "init":
+		os.Exit(initCmd())
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -71,6 +77,8 @@ usage:
   capbus bridge <name>       stdio shim used by agents (called by them)
   capbus exec <name>         run one capability with secrets injected
   capbus secret <cmd>        manage credentials: list|set|get|rm
+  capbus mcp                 run capbus as an MCP server (agents drive it)
+  capbus init                setup check with the exact next steps
   capbus version
 
   --shared  point global capabilities at the shared backend instead of
@@ -546,4 +554,102 @@ func secretCmd(args []string) int {
 		usageSecret()
 		return 2
 	}
+}
+
+// mcpCmd runs capbus as an MCP server, so an agent can manage capabilities by
+// calling tools instead of asking the user to type shell commands.
+func mcpCmd() int {
+	srv := mcpserver.New(proto.NewReader(os.Stdin), proto.NewWriter(os.Stdout), version)
+	if err := srv.Serve(); err != nil && !errors.Is(err, io.EOF) {
+		fmt.Fprintf(os.Stderr, "capbus mcp: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+// initCmd is the "what do I do next" command: it inspects this machine and
+// prints only the steps that are actually missing.
+func initCmd() int {
+	fmt.Printf("capbus %s — setup check\n\n", version)
+
+	dir := registry.Dir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "capbus init: %v\n", err)
+		return 1
+	}
+
+	ms, errs := registry.Load()
+	fmt.Printf("capabilities   %d declared in %s\n", len(ms), dir)
+	for _, e := range errs {
+		fmt.Printf("               ! %v\n", e)
+	}
+
+	var detected []string
+	for _, a := range materialize.Agents() {
+		if a.Detect() {
+			detected = append(detected, a.Name())
+		}
+	}
+	sort.Strings(detected)
+	if len(detected) == 0 {
+		fmt.Println("agents         none detected")
+	} else {
+		fmt.Printf("agents         %s\n", strings.Join(detected, ", "))
+	}
+
+	var missing []string
+	if st, err := secret.Open(); err == nil {
+		for _, m := range ms {
+			if len(m.Permissions.Secrets) == 0 {
+				continue
+			}
+			if _, miss, err := st.Resolve(m.Permissions.Secrets); err == nil {
+				missing = append(missing, miss...)
+			}
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) == 0 {
+		fmt.Println("secrets        none missing")
+	} else {
+		fmt.Printf("secrets        missing %s\n", strings.Join(missing, ", "))
+	}
+
+	sharing := false
+	if st, err := supervise.LoadState(); err == nil && len(st.Capabilities) > 0 {
+		sharing = true
+		fmt.Printf("shared backend running (pid %d), %d capability(ies)\n", st.SupervisorPID, len(st.Capabilities))
+	} else {
+		fmt.Println("shared backend not running")
+	}
+
+	var steps []string
+	for _, s := range missing {
+		if runtime.GOOS == "windows" {
+			steps = append(steps, fmt.Sprintf("$env:%s | capbus secret set %s", s, s))
+		} else {
+			steps = append(steps, fmt.Sprintf("echo \"$%s\" | capbus secret set %s", s, s))
+		}
+	}
+	if !sharing {
+		steps = append(steps, "capbus supervise       # one backend shared by every agent; leave it running")
+	}
+	switch {
+	case len(detected) > 0 && sharing:
+		steps = append(steps, "capbus sync --shared   # point every agent at the shared backend")
+	case len(detected) > 0:
+		steps = append(steps, "capbus sync            # write capabilities into every agent")
+	default:
+		steps = append(steps, "install an agent (Claude Code, Cursor, Codex or DSH), then run capbus sync")
+	}
+	if len(ms) == 0 {
+		steps = append(steps, fmt.Sprintf("declare a capability in %s", dir))
+	}
+
+	fmt.Println("\nnext:")
+	for i, s := range steps {
+		fmt.Printf("  %d. %s\n", i+1, s)
+	}
+	// Nothing here is fatal, so this is guidance and exits 0.
+	return 0
 }
