@@ -82,6 +82,10 @@ func attach(t *testing.T, b *backend) *conn {
 
 func startDaemon(t *testing.T) *Daemon {
 	t.Helper()
+	// Tests must never write into the user's real ~/.capbus: the supervisor
+	// records activity, and a test that pollutes a real panel is worse than no
+	// test at all.
+	t.Setenv("CAPBUS_HOME", t.TempDir())
 	lg := log.New(os.Stderr, "[test] ", 0)
 	d := New([]manifest.Manifest{helperManifest()}, lg)
 	if err := d.Start(); err != nil {

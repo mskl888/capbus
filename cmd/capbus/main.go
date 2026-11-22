@@ -232,15 +232,15 @@ func list() int {
 		fmt.Printf("add one to %s\n", registry.Dir())
 		return 0
 	}
-	fmt.Printf("%-16s %-6s %-10s %-9s %s\n", "NAME", "KIND", "SCOPE", "STATEFUL", "SOURCE")
+	fmt.Println(pad(i18n.T("NAME"), 18) + pad(i18n.T("KIND"), 7) + pad(i18n.T("SCOPE"), 11) + pad(i18n.T("STATEFUL"), 9) + i18n.T("SOURCE"))
 	st, _ := enabled.Load()
 	for _, m := range ms {
 		mark := ""
 		if !st.IsEnabled(m.Name) {
-			mark = "   [off]"
+			mark = "   " + i18n.T("[off]")
 		}
-		fmt.Printf("%-16s %-6s %-10s %-9v %s%s\n",
-			m.Name, m.Kind, m.Scope, m.Stateful, sourceString(m), mark)
+		fmt.Println(pad(m.Name, 18) + pad(string(m.Kind), 7) + pad(string(m.Scope), 11) +
+			pad(fmt.Sprint(m.Stateful), 9) + sourceString(m) + mark)
 	}
 	return 0
 }
@@ -296,12 +296,12 @@ func syncCmd(args []string) int {
 	}
 	if len(wrote) == 0 {
 		if len(syncErrs) == 0 {
-			fmt.Println("no agent config found - install an agent, or run `capbus doctor`")
+			fmt.Println(i18n.T("no agent config found - install an agent, or run `capbus doctor`"))
 		}
 		return 1
 	}
 	for _, w := range wrote {
-		fmt.Println("wrote " + w)
+		fmt.Println(i18n.T("wrote") + " " + w)
 	}
 	if len(ms) > 0 {
 		names := make([]string, 0, len(ms))
@@ -309,16 +309,16 @@ func syncCmd(args []string) int {
 			names = append(names, m.Name)
 		}
 		tokens, measured, missing := cost.Total(names)
-		fmt.Printf("\n%d capability(ies) injected", len(ms))
+		out := "\n" + i18n.T("%d capability(ies) injected", len(ms))
 		if measured > 0 {
-			fmt.Printf(", about %d tokens on every turn", tokens)
+			out += i18n.T(", about %d tokens on every turn", tokens)
 		}
 		if missing > 0 {
-			fmt.Printf(" (%d unmeasured: run `capbus cost`)", missing)
+			out += i18n.T(" (%d unmeasured: run `capbus cost`)", missing)
 		}
-		fmt.Println()
+		fmt.Println(out)
 		if tokens > 20000 {
-			fmt.Println("that is a large slice of the context window: `capbus use <name>` narrows it")
+			fmt.Println(i18n.T("that is a large slice of the context window: `capbus use <name>` narrows it"))
 		}
 	}
 	if len(syncErrs) > 0 {
@@ -847,6 +847,50 @@ func truncate(s string, n int) string {
 	return s[:n-1] + "..."
 }
 
+// displayWidth counts terminal columns, not bytes: a CJK rune occupies two, so
+// padding by len() collapses every Chinese column.
+func displayWidth(s string) int {
+	w := 0
+	for _, r := range s {
+		if isWide(r) {
+			w += 2
+		} else {
+			w++
+		}
+	}
+	return w
+}
+
+func isWide(r rune) bool {
+	switch {
+	case r >= 0x1100 && r <= 0x115F,
+		r >= 0x2E80 && r <= 0xA4CF,
+		r >= 0xAC00 && r <= 0xD7A3,
+		r >= 0xF900 && r <= 0xFAFF,
+		r >= 0xFE30 && r <= 0xFE6F,
+		r >= 0xFF00 && r <= 0xFF60,
+		r >= 0xFFE0 && r <= 0xFFE6:
+		return true
+	}
+	return false
+}
+
+// pad right-pads to n display columns.
+func pad(s string, n int) string {
+	if d := displayWidth(s); d < n {
+		return s + strings.Repeat(" ", n-d)
+	}
+	return s
+}
+
+// padl right-aligns within n display columns.
+func padl(s string, n int) string {
+	if d := displayWidth(s); d < n {
+		return strings.Repeat(" ", n-d) + s
+	}
+	return s
+}
+
 // activityCmd shows what agents actually called. Only metadata was recorded:
 // never arguments, never results.
 func activityCmd(args []string) int {
@@ -889,9 +933,9 @@ func activityCmd(args []string) int {
 	}
 	sort.Slice(names, func(i, j int) bool { return sum[names[i]].Calls > sum[names[j]].Calls })
 
-	fmt.Printf("%-20s %6s  %-16s  %-22s %10s %9s\n",
-		i18n.T("CAPABILITY"), i18n.T("CALLS"), i18n.T("LAST CALL"),
-		i18n.T("TOP TOOL"), i18n.T("BYTES OUT"), i18n.T("TRIMMED"))
+	fmt.Println(pad(i18n.T("CAPABILITY"), 20) + padl(i18n.T("CALLS"), 8) + "  " +
+		pad(i18n.T("LAST CALL"), 16) + "  " + pad(i18n.T("TOP TOOL"), 22) + " " +
+		padl(i18n.T("BYTES OUT"), 10) + " " + padl(i18n.T("TRIMMED"), 9))
 	for _, n := range names {
 		s := sum[n]
 		top := "-"
@@ -905,10 +949,12 @@ func activityCmd(args []string) int {
 		if !s.LastCall.IsZero() {
 			last = s.LastCall.Format("2006-01-02 15:04")
 		}
-		fmt.Printf("%-20s %6d  %-16s  %-22s %10s %9s\n",
-			n, s.Calls, last, truncate(top, 22), humanBytes(s.BytesOut), humanBytes(s.Trimmed))
+		fmt.Println(pad(n, 20) + padl(fmt.Sprintf("%d", s.Calls), 8) + "  " +
+			pad(last, 16) + "  " + pad(truncate(top, 22), 22) + " " +
+			padl(humanBytes(s.BytesOut), 10) + " " + padl(humanBytes(s.Trimmed), 9))
 	}
-	fmt.Printf("\n%d event(s) from the last %d of %s\n", len(events), n, activity.Path())
+	fmt.Println()
+	fmt.Println(i18n.T("%d event(s) from the last %d of %s", len(events), n, activity.Path()))
 	return 0
 }
 
@@ -1099,14 +1145,16 @@ func costCmd(args []string) int {
 	}
 	st, _ := enabled.Load()
 
-	fmt.Printf("%-22s %6s %9s %8s  %s\n", "NAME", "TOOLS", "BYTES", "TOKENS", "STATE")
+	fmt.Println(pad(i18n.T("NAME"), 22) + padl(i18n.T("TOOLS"), 7) + padl(i18n.T("BYTES"), 10) +
+		padl(i18n.T("TOKENS"), 8) + "  " + i18n.T("STATE"))
 	var total, measured, failed int
 	for _, m := range ms {
 		c, cached := cost.Get(m.Name)
 		if refresh || !cached {
 			r, err := probe.Measure(m, 120*time.Second)
 			if err != nil {
-				fmt.Printf("%-22s %6s %9s %8s  %s\n", m.Name, "?", "?", "?", "probe failed: "+truncate(err.Error(), 40))
+				fmt.Println(pad(m.Name, 22) + padl("?", 7) + padl("?", 10) + padl("?", 8) + "  " +
+					i18n.T("probe failed: ") + truncate(err.Error(), 40))
 				failed++
 				continue
 			}
@@ -1119,22 +1167,26 @@ func costCmd(args []string) int {
 			}
 			_ = cost.Put(m.Name, c)
 		}
-		state := "on"
+		state := i18n.T("on")
 		if !st.IsEnabled(m.Name) {
-			state = "off"
+			state = i18n.T("off")
 		}
-		fmt.Printf("%-22s %6d %9d %8d  %s\n", m.Name, c.Tools, c.Bytes, c.Tokens, state)
+		fmt.Println(pad(m.Name, 22) + padl(fmt.Sprintf("%d", c.Tools), 7) +
+			padl(fmt.Sprintf("%d", c.Bytes), 10) + padl(fmt.Sprintf("%d", c.Tokens), 8) + "  " + state)
 		total += c.Tokens
 		measured++
 	}
 
-	fmt.Printf("\n~%d tokens on every turn, over %d measured", total, measured)
-	if failed > 0 {
-		fmt.Printf(" (+%d failed to probe)", failed)
-	}
 	fmt.Println()
+	fmt.Println(i18n.T("~%d tokens on every turn, over %d measured", total, measured) +
+		func() string {
+			if failed > 0 {
+				return i18n.T(" (+%d failed to probe)", failed)
+			}
+			return ""
+		}())
 	if total > 20000 {
-		fmt.Println("that is a large slice of the context window: `capbus use <name>` narrows it")
+		fmt.Println(i18n.T("that is a large slice of the context window: `capbus use <name>` narrows it"))
 	}
 	return 0
 }
