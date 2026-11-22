@@ -21,6 +21,7 @@ import (
 
 	"github.com/capbus/capbus/internal/activity"
 	"github.com/capbus/capbus/internal/enabled"
+	"github.com/capbus/capbus/internal/i18n"
 	"github.com/capbus/capbus/internal/importscan"
 	"github.com/capbus/capbus/internal/manifest"
 	"github.com/capbus/capbus/internal/materialize"
@@ -876,8 +877,8 @@ func activityCmd(args []string) int {
 		return 1
 	}
 	if len(events) == 0 {
-		fmt.Println("nothing recorded yet")
-		fmt.Println("calls are recorded when an agent runs a capability through capbus exec, or through the shared backend")
+		fmt.Println(i18n.T("nothing recorded yet"))
+		fmt.Println(i18n.T("calls are recorded when an agent runs a capability through capbus exec, or through the shared backend"))
 		return 0
 	}
 
@@ -888,7 +889,9 @@ func activityCmd(args []string) int {
 	}
 	sort.Slice(names, func(i, j int) bool { return sum[names[i]].Calls > sum[names[j]].Calls })
 
-	fmt.Printf("%-20s %6s  %-16s  %-22s %10s %9s\n", "CAPABILITY", "CALLS", "LAST CALL", "TOP TOOL", "BYTES OUT", "TRIMMED")
+	fmt.Printf("%-20s %6s  %-16s  %-22s %10s %9s\n",
+		i18n.T("CAPABILITY"), i18n.T("CALLS"), i18n.T("LAST CALL"),
+		i18n.T("TOP TOOL"), i18n.T("BYTES OUT"), i18n.T("TRIMMED"))
 	for _, n := range names {
 		s := sum[n]
 		top := "-"
@@ -924,22 +927,23 @@ func humanBytes(n int) string {
 func scanCmd() int {
 	rep := scan.Run()
 
-	fmt.Println("capbus scan - read only, nothing has been changed")
+	fmt.Println(i18n.T("capbus scan - read only, nothing has been changed"))
 	fmt.Println()
-	fmt.Printf("%d plugin package(s) in agent profiles, %d resolvable MCP server(s) among them\n",
-		len(rep.Packages), rep.ResolvedNatives())
-	fmt.Printf("%d capability(ies) declared, %d enabled\n", rep.Declared, rep.Enabled)
+	fmt.Println(i18n.T("%d plugin package(s) in agent profiles, %d resolvable MCP server(s) among them",
+		len(rep.Packages), rep.ResolvedNatives()))
+	fmt.Println(i18n.T("%d capability(ies) declared, %d enabled", rep.Declared, rep.Enabled))
 	if ags := scan.Agents(); len(ags) > 0 {
-		fmt.Printf("agents: %s\n", strings.Join(ags, ", "))
+		fmt.Println(i18n.T("agents: %s", strings.Join(ags, ", ")))
 	} else {
-		fmt.Println("agents: none detected")
+		fmt.Println(i18n.T("agents: none detected"))
 	}
 
 	if len(rep.Findings) == 0 {
-		fmt.Println("\nnothing to report")
+		fmt.Println("\n" + i18n.T("nothing to report"))
 		return 0
 	}
-	fmt.Printf("\n%d finding(s)\n", len(rep.Findings))
+	fmt.Println()
+	fmt.Println(i18n.T("%d finding(s)", len(rep.Findings)))
 	for _, f := range rep.Findings {
 		fmt.Printf("\n[%s] %s\n", f.Severity, f.Title)
 		if f.Detail != "" {

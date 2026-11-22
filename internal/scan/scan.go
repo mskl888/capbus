@@ -7,7 +7,7 @@
 package scan
 
 import (
-	"fmt"
+	"github.com/capbus/capbus/internal/i18n"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -120,21 +120,21 @@ func checkNatives(natives []importscan.Native, declared map[string]bool) []Findi
 		switch {
 		case n.Broken:
 			if already {
-				duplicates = append(duplicates, label+" - also declared in capbus; the agent still loads its own copy")
+				duplicates = append(duplicates, label+i18n.T(" - also declared in capbus; the agent still loads its own copy"))
 			} else {
-				unreadable = append(unreadable, label+" - its bundle could not be read")
+				unreadable = append(unreadable, label+i18n.T(" - its bundle could not be read"))
 			}
 		case n.Resolved && !already:
 			unmanaged = append(unmanaged, label)
 		case already:
 			// Declared in capbus *and* installed in the agent. The native copy
 			// is what actually runs, so the capbus switch does nothing yet.
-			duplicates = append(duplicates, label+" - also declared in capbus; the agent still loads its own copy")
+			duplicates = append(duplicates, label+i18n.T(" - also declared in capbus; the agent still loads its own copy"))
 		default:
 			// Present, but its launch command is computed at runtime. It may
 			// still be adoptable through a state file; only complain when the
 			// name is unknown to capbus.
-			unreadable = append(unreadable, label+" - launch command is computed, no plain command to copy")
+			unreadable = append(unreadable, label+i18n.T(" - launch command is computed, no plain command to copy"))
 		}
 	}
 
@@ -143,9 +143,9 @@ func checkNatives(natives []importscan.Native, declared map[string]bool) []Findi
 		out = append(out, Finding{
 			ID:       "adopt",
 			Severity: High,
-			Title:    fmt.Sprintf("%d MCP server(s) are installed inside an agent and cost tokens capbus cannot control", len(unmanaged)),
-			Detail:   "Each one injects its tool descriptions into the model on every turn. Disabling them in capbus does nothing until capbus owns the entry.",
-			Fix:      "capbus import  (then adopt: stop the plugin, install the capbus bundle)",
+			Title:    i18n.T("%d MCP server(s) are installed inside an agent and cost tokens capbus cannot control", len(unmanaged)),
+			Detail:   i18n.T("Each one injects its tool descriptions into the model on every turn. Disabling them in capbus does nothing until capbus owns the entry."),
+			Fix:      i18n.T("capbus import  (then adopt: stop the plugin, install the capbus bundle)"),
 			Items:    unmanaged,
 		})
 	}
@@ -153,9 +153,9 @@ func checkNatives(natives []importscan.Native, declared map[string]bool) []Findi
 		out = append(out, Finding{
 			ID:       "duplicate",
 			Severity: Medium,
-			Title:    fmt.Sprintf("%d capability(ies) are installed twice: once natively, once in capbus", len(duplicates)),
-			Detail:   "The native copy is what the agent actually loads, so the capbus switch has no effect yet.",
-			Fix:      "capbus sync, then remove the native plugin",
+			Title:    i18n.T("%d capability(ies) are installed twice: once natively, once in capbus", len(duplicates)),
+			Detail:   i18n.T("The native copy is what the agent actually loads, so the capbus switch has no effect yet."),
+			Fix:      i18n.T("capbus sync, then remove the native plugin"),
 			Items:    duplicates,
 		})
 	}
@@ -163,9 +163,9 @@ func checkNatives(natives []importscan.Native, declared map[string]bool) []Findi
 		out = append(out, Finding{
 			ID:       "adopt-manual",
 			Severity: Low,
-			Title:    fmt.Sprintf("%d MCP plugin(s) cannot be adopted automatically", len(unreadable)),
-			Detail:   "Their launch command is built at runtime, so capbus cannot copy it. They need a hand-written manifest.",
-			Fix:      "write a manifest by hand for these, or leave them alone",
+			Title:    i18n.T("%d MCP plugin(s) cannot be adopted automatically", len(unreadable)),
+			Detail:   i18n.T("Their launch command is built at runtime, so capbus cannot copy it. They need a hand-written manifest."),
+			Fix:      i18n.T("write a manifest by hand for these, or leave them alone"),
 			Items:    unreadable,
 		})
 	}
@@ -232,7 +232,7 @@ func checkStateful(ms []manifest.Manifest) []Finding {
 		if score < 2 {
 			continue
 		}
-		items = append(items, fmt.Sprintf("%s exposes %s-style tools but is declared scope: global",
+		items = append(items, i18n.T("%s exposes %s-style tools but is declared scope: global",
 			m.Name, strings.Join(hits, "/")))
 	}
 	if len(items) == 0 {
@@ -241,10 +241,10 @@ func checkStateful(ms []manifest.Manifest) []Finding {
 	return []Finding{{
 		ID:       "stateful-global",
 		Severity: High,
-		Title:    fmt.Sprintf("%d shared capability(ies) look stateful", len(items)),
-		Detail: "Two agents driving one live session overwrite each other's target, cursor or open document, " +
-			"and nothing reports an error. Isolation - one process per agent - is the fix, not a lock.",
-		Fix:   "re-declare with scope: workspace, then capbus sync",
+		Title:    i18n.T("%d shared capability(ies) look stateful", len(items)),
+		Detail: i18n.T("Two agents driving one live session overwrite each other's target, cursor or open document, " +
+			"and nothing reports an error. Isolation - one process per agent - is the fix, not a lock."),
+		Fix:   i18n.T("re-declare with scope: workspace, then capbus sync"),
 		Items: items,
 	}}
 }
@@ -259,7 +259,7 @@ func checkRuntimes(ms []manifest.Manifest) []Finding {
 			continue
 		}
 		if _, err := exec.LookPath(bin); err != nil {
-			items = append(items, fmt.Sprintf("%s needs %q, which is not installed", m.Name, bin))
+			items = append(items, i18n.T("%s needs %q, which is not installed", m.Name, bin))
 		}
 	}
 	if len(items) == 0 {
@@ -268,9 +268,9 @@ func checkRuntimes(ms []manifest.Manifest) []Finding {
 	return []Finding{{
 		ID:       "install-runtime",
 		Severity: Medium,
-		Title:    fmt.Sprintf("%d enabled capability(ies) cannot start: missing runtime", len(items)),
-		Detail:   "A capability that cannot start is still declared, so your agents may report a broken plugin.",
-		Fix:      "install the missing runtime, or disable the capability",
+		Title:    i18n.T("%d enabled capability(ies) cannot start: missing runtime", len(items)),
+		Detail:   i18n.T("A capability that cannot start is still declared, so your agents may report a broken plugin."),
+		Fix:      i18n.T("install the missing runtime, or disable the capability"),
 		Items:    items,
 	}}
 }
@@ -282,7 +282,7 @@ func checkSecrets(ms []manifest.Manifest) []Finding {
 	if err != nil {
 		return []Finding{{
 			ID: "secret-store", Severity: Medium,
-			Title:  "the credential store cannot be opened",
+			Title:  i18n.T("the credential store cannot be opened"),
 			Detail: err.Error(),
 		}}
 	}
@@ -296,7 +296,7 @@ func checkSecrets(ms []manifest.Manifest) []Finding {
 			continue
 		}
 		for _, name := range missing {
-			items = append(items, fmt.Sprintf("%s needs %s", m.Name, name))
+			items = append(items, i18n.T("%s needs %s", m.Name, name))
 		}
 	}
 	if len(items) == 0 {
@@ -305,9 +305,9 @@ func checkSecrets(ms []manifest.Manifest) []Finding {
 	return []Finding{{
 		ID:       "set-secret",
 		Severity: Medium,
-		Title:    fmt.Sprintf("%d credential(s) are missing", len(items)),
-		Detail:   "These capabilities will fail at startup. The value never needs to pass through an agent.",
-		Fix:      "capbus secret set <NAME>",
+		Title:    i18n.T("%d credential(s) are missing", len(items)),
+		Detail:   i18n.T("These capabilities will fail at startup. The value never needs to pass through an agent."),
+		Fix:      i18n.T("capbus secret set <NAME>"),
 		Items:    items,
 	}}
 }
@@ -321,7 +321,7 @@ func checkStale(declared map[string]bool) []Finding {
 			continue
 		}
 		if !declared[f.Name] {
-			items = append(items, fmt.Sprintf("%s is still configured in an agent but no longer declared", f.Name))
+			items = append(items, i18n.T("%s is still configured in an agent but no longer declared", f.Name))
 		}
 	}
 	if len(items) == 0 {
@@ -330,9 +330,9 @@ func checkStale(declared map[string]bool) []Finding {
 	return []Finding{{
 		ID:       "stale-config",
 		Severity: Low,
-		Title:    fmt.Sprintf("%d stale entr(ies) left in agent configs", len(items)),
-		Detail:   "capbus writes the whole capability block, so a sync removes them.",
-		Fix:      "capbus sync",
+		Title:    i18n.T("%d stale entr(ies) left in agent configs", len(items)),
+		Detail:   i18n.T("capbus writes the whole capability block, so a sync removes them."),
+		Fix:      i18n.T("capbus sync"),
 		Items:    items,
 	}}
 }
@@ -347,24 +347,24 @@ func checkCost(ms []manifest.Manifest) []Finding {
 	if measured == 0 {
 		return []Finding{{
 			ID: "measure", Severity: Info,
-			Title:  "no capability costs have been measured yet",
-			Detail: "Without a measurement the per-turn cost is unknown.",
-			Fix:    "capbus cost",
+			Title:  i18n.T("no capability costs have been measured yet"),
+			Detail: i18n.T("Without a measurement the per-turn cost is unknown."),
+			Fix:    i18n.T("capbus cost"),
 		}}
 	}
 	if tokens <= 20000 && missing == 0 {
 		return nil
 	}
-	detail := fmt.Sprintf("%d enabled capability(ies) cost about %d tokens on every turn", len(names), tokens)
+	detail := i18n.T("%d enabled capability(ies) cost about %d tokens on every turn", len(names), tokens)
 	if missing > 0 {
-		detail += fmt.Sprintf(", and %d are unmeasured", missing)
+		detail += i18n.T(", and %d are unmeasured", missing)
 	}
 	return []Finding{{
 		ID:       "cost",
 		Severity: Medium,
-		Title:    "the enabled set is expensive",
+		Title:    i18n.T("the enabled set is expensive"),
 		Detail:   detail,
-		Fix:      "capbus use <name>  (keep only what this session needs)",
+		Fix:      i18n.T("capbus use <name>  (keep only what this session needs)"),
 	}}
 }
 
@@ -386,9 +386,9 @@ func checkSupervisor(ms []manifest.Manifest) []Finding {
 	return []Finding{{
 		ID:       "supervise",
 		Severity: Info,
-		Title:    fmt.Sprintf("%d global capabilities will each start a separate copy in every agent", global),
-		Detail:   "One shared backend would start once and serve every agent.",
-		Fix:      "capbus supervise, then capbus sync --shared",
+		Title:    i18n.T("%d global capabilities will each start a separate copy in every agent", global),
+		Detail:   i18n.T("One shared backend would start once and serve every agent."),
+		Fix:      i18n.T("capbus supervise, then capbus sync --shared"),
 	}}
 }
 
