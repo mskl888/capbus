@@ -16,7 +16,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          # Test on current Go. Go < 1.23.4 on macOS 15 aborts when a test
+          # binary re-executes itself ("dyld: missing LC_UUID"), which the
+          # supervisor tests do to get a controllable MCP backend. go.mod still
+          # declares 1.22 as the supported minimum.
+          go-version: stable
           cache: true
       - name: gofmt
         run: gofmt -l . && test -z "$(gofmt -l .)" 
