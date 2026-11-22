@@ -3,6 +3,7 @@ package secret
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -152,5 +153,54 @@ func TestEmptyInputsRejected(t *testing.T) {
 	}
 	if err := s.Set("K", ""); err == nil {
 		t.Fatal("empty value must be rejected")
+	}
+}
+
+// MkdirAll leaves an existing directory's mode alone. Found by testing on a
+// real Linux host: a store inside a 0775 directory stayed group-writable while
+// holding the master key.
+func TestOpenForcesPrivateDirMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX mode bits are not meaningful on Windows")
+	}
+	dir := filepath.Join(t.TempDir(), "state")
+	if err := os.MkdirAll(dir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenAt(dir); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := st.Mode().Perm(); got != 0o700 {
+		t.Fatalf("store dir mode is %o, want 700", got)
+	}
+}
+
+// Reopening must reuse the existing key: regenerating it would orphan every
+// secret already encrypted with the old one.
+func TestKeyIsNotRegenerated(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := OpenAt(dir); err != nil {
+		t.Fatal(err)
+	}
+	first, err := os.ReadFile(filepath.Join(dir, "master.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenAt(dir); err != nil {
+		t.Fatal(err)
+	}
+	second, err := os.ReadFile(filepath.Join(dir, "master.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first) != string(second) {
+		t.Fatal("master key was regenerated on reopen")
 	}
 }

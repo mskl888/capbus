@@ -72,6 +72,12 @@ func OpenAt(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
+	// MkdirAll leaves an existing directory's mode alone, so a store created
+	// by an earlier 0775 parent stays group-writable. The master key lives
+	// here; make the mode authoritative on every open.
+	if err := os.Chmod(dir, 0o700); err != nil && !os.IsPermission(err) {
+		return nil, err
+	}
 	key, err := loadKey(dir)
 	if err != nil {
 		return nil, err
@@ -98,13 +104,37 @@ func loadKey(dir string) ([]byte, error) {
 		}
 		return k, nil
 	}
-
 	k := make([]byte, keyLen)
 	if _, err := rand.Read(k); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(keyPath(dir), []byte(hex.EncodeToString(k)), 0o600); err != nil {
+	// Create exclusively: two capbus processes starting at once must not each
+	// generate a key and have one of them lose, orphaning the other's secrets.
+	f, err := os.OpenFile(keyPath(dir), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		if os.IsExist(err) {
+			return readKey(keyPath(dir))
+		}
 		return nil, err
+	}
+	if _, err := f.WriteString(hex.EncodeToString(k)); err != nil {
+		f.Close()
+		return nil, err
+	}
+	if err := f.Close(); err != nil {
+		return nil, err
+	}
+	return k, nil
+}
+
+func readKey(path string) ([]byte, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	k, err := hex.DecodeString(strings.TrimSpace(string(b)))
+	if err != nil || len(k) != keyLen {
+		return nil, fmt.Errorf("%s is not a valid master key", path)
 	}
 	return k, nil
 }
