@@ -27,6 +27,7 @@ import (
 	"github.com/capbus/capbus/internal/manifest"
 	"github.com/capbus/capbus/internal/materialize"
 	"github.com/capbus/capbus/internal/mcpserver"
+	"github.com/capbus/capbus/internal/panel"
 	"github.com/capbus/capbus/internal/probe"
 	"github.com/capbus/capbus/internal/proto"
 	"github.com/capbus/capbus/internal/proxy"
@@ -87,6 +88,8 @@ func main() {
 		os.Exit(adoptCmd(os.Args[2:]))
 	case "undo":
 		os.Exit(undoCmd())
+	case "ui":
+		os.Exit(uiCmd(os.Args[2:]))
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -118,6 +121,7 @@ usage:
   capbus activity [--tail N] what capabilities were actually called
   capbus adopt [--apply] <name>  take over an MCP server an agent installed
   capbus undo                reverse the last adopt
+  capbus ui [--no-open]      open the local dashboard
   capbus version
 
   --shared  point global capabilities at the shared backend instead of
@@ -1275,5 +1279,60 @@ func undoCmd() int {
 		fmt.Println(s)
 	}
 	fmt.Println("\nrestart the agent for the restored files to take effect.")
+	return 0
+}
+
+// uiCmd serves the local dashboard. It is a foreground program by design:
+// bind 127.0.0.1, open a browser, stop on Ctrl-C. Nothing is exposed.
+func uiCmd(args []string) int {
+	noOpen := false
+	port := 0
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--no-open":
+			noOpen = true
+		case "--port":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "capbus ui: --port needs a number")
+				return 2
+			}
+			i++
+			v, err := strconv.Atoi(args[i])
+			if err != nil || v < 0 || v > 65535 {
+				fmt.Fprintf(os.Stderr, "capbus ui: bad port %q\n", args[i])
+				return 2
+			}
+			port = v
+		default:
+			fmt.Fprintf(os.Stderr, "capbus ui: unknown flag %q\n", args[i])
+			return 2
+		}
+	}
+
+	srv, err := panel.New(port)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "capbus ui: %v\n", err)
+		return 1
+	}
+	fmt.Println(i18n.T("capbus panel: ") + srv.URL())
+	fmt.Println(i18n.T("Ctrl-C to stop. Closing this window closes the panel; it is not a service."))
+	if !noOpen {
+		if err := panel.OpenBrowser(srv.URL()); err != nil {
+			fmt.Println(i18n.T("(could not open a browser; paste the address above)"))
+		}
+	}
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt)
+	go func() {
+		<-sig
+		_ = srv.Close()
+	}()
+
+	if err := srv.Serve(); err != nil {
+		// Closing the listener is how Ctrl-C ends this, so an error here is the
+		// normal exit path.
+	}
+	fmt.Println("\n" + i18n.T("panel closed"))
 	return 0
 }

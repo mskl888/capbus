@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>capbus · 能力星图</title>
+<style>
+  :root{
+    --bg:#080b12; --fg:#e8eefc; --dim:#8792a8; --line:#1c2433;
+    --active:#5ef2a0; --stale:#f5c451; --idle:#ff6b6b; --off:#556076; --dead:#b06bff;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{
+    background:radial-gradient(circle at 50% 38%,#101a2e 0%,var(--bg) 62%);
+    color:var(--fg);
+    font-family:"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+    overflow:hidden;
+  }
+  #sky{position:fixed;inset:0;width:100%;height:100%;display:block}
+  header{
+    position:fixed;top:0;left:0;right:0;padding:14px 20px;display:flex;
+    gap:22px;align-items:baseline;z-index:5;pointer-events:none;
+  }
+  header h1{font-size:15px;margin:0;letter-spacing:.14em;font-weight:600;color:#bcd0f0}
+  header h1 span{color:var(--active)}
+  .stat{font-size:12px;color:var(--dim)}
+  .stat b{color:var(--fg);font-weight:600;font-variant-numeric:tabular-nums}
+  .spacer{flex:1}
+  #err{color:var(--idle);font-size:12px}
+
+  footer{
+    position:fixed;left:0;right:0;bottom:0;max-height:40vh;overflow:auto;
+    background:linear-gradient(to top,rgba(8,11,18,.97),rgba(8,11,18,.82));
+    border-top:1px solid var(--line);z-index:5;padding:10px 14px 16px;
+  }
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{
+    text-align:left;font-weight:500;color:var(--dim);font-size:11px;
+    letter-spacing:.06em;padding:4px 8px;position:sticky;top:0;
+    background:rgba(8,11,18,.95);
+  }
+  td{padding:7px 8px;border-top:1px solid rgba(28,36,51,.7);vertical-align:middle}
+  tr.sel td{background:rgba(94,242,160,.06)}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:8px;
+       vertical-align:middle;box-shadow:0 0 10px currentColor}
+  .name{font-weight:600}
+  .chip{font-size:10px;padding:1px 6px;border-radius:9px;border:1px solid var(--line);
+        color:var(--dim);margin-left:7px}
+  .num{font-variant-numeric:tabular-nums;color:#c6d2e6}
+  .why{color:var(--dim);font-size:11px}
+  .sw{width:38px;height:20px;border-radius:10px;border:1px solid var(--line);
+      background:#141b28;position:relative;cursor:pointer;transition:.18s}
+  .sw::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;
+             border-radius:50%;background:#5b6a83;transition:.18s}
+  .sw.on{background:rgba(94,242,160,.16);border-color:rgba(94,242,160,.5)}
+  .sw.on::after{left:20px;background:var(--active)}
+  .findings{padding:2px 8px 0;font-size:11.5px;color:var(--dim);line-height:1.75}
+  .findings b{color:var(--stale);font-weight:500}
+</style>
+</head>
+<body>
+<canvas id="sky"></canvas>
+
+<header>
+  <h1>CAP<span>BUS</span> · 能力星图</h1>
+  <div class="stat">声明 <b id="s-declared">0</b></div>
+  <div class="stat">启用 <b id="s-enabled">0</b></div>
+  <div class="stat">每轮 <b id="s-tokens">0</b> tokens</div>
+  <div class="stat" id="s-sup">共享后端：未运行</div>
+  <div class="spacer"></div>
+  <div id="err"></div>
+</header>
+
+<footer>
+  <div class="findings" id="findings"></div>
+  <table>
+    <thead><tr>
+      <th style="width:32%">能力</th><th>作用域</th><th>工具</th><th>每轮 tokens</th>
+      <th>调用</th><th>最近</th><th>最常用</th><th>状态</th><th style="width:52px">开关</th>
+    </tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+</footer>
+
+<script>
+const TOKEN = "__CAPBUS_TOKEN__";
+const cvs = document.getElementById('sky');
+const ctx = cvs.getContext('2d');
+let W = 0, H = 0, DPR = 1;
+let state = null;
+let nodes = [];
+let particles = [];
+let selected = null;
+let t0 = performance.now();
+
+const COLORS = { active:'#5ef2a0', stale:'#f5c451', idle:'#ff6b6b', off:'#556076', dead:'#b06bff' };
+
+function resize(){
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = cvs.clientWidth; H = cvs.clientHeight;
+  cvs.width = W * DPR; cvs.height = H * DPR;
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  layout();
+}
+
+function layout(){
+  const cx = W/2, cy = H*0.40;
+  const ring = Math.min(W,H) * 0.27;
+  const n = nodes.length;
+  nodes.forEach((nd,i)=>{
+    const a = -Math.PI/2 + (i/Math.max(n,1)) * Math.PI*2;
+    nd.x = cx + Math.cos(a)*ring;
+    nd.y = cy + Math.sin(a)*ring;
+    nd.a = a;
+  });
+  window.__center = {cx,cy};
+}
+
+async function refresh(){
+  try{
+    const r = await fetch('/api/state', {cache:'no-store'});
+    const s = await r.json();
+    state = s;
+    document.getElementById('err').textContent = '';
+    document.getElementById('s-declared').textContent = s.declared;
+    document.getElementById('s-enabled').textContent = s.enabled;
+    document.getElementById('s-tokens').textContent = s.tokens.toLocaleString();
+    document.getElementById('s-sup').textContent = s.supervisor
+      ? ('共享后端：运行中 (pid ' + s.superPid + ')') : '共享后端：未运行';
+
+    const prev = new Map(nodes.map(n=>[n.name,n]));
+    nodes = s.nodes.map(n=>{
+      const old = prev.get(n.name);
+      return Object.assign({}, n, old ? {x:old.x,y:old.y,a:old.a} : {});
+    });
+    layout();
+    renderRows();
+    document.getElementById('findings').innerHTML =
+      s.findings.slice(0,3).map(f=>'<b>' + esc(f) + '</b>').join(' · ');
+  }catch(e){
+    document.getElementById('err').textContent = '连接已断开';
+  }
+}
+
+function esc(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function renderRows(){
+  const tb = document.getElementById('rows');
+  tb.innerHTML = state.nodes.map(n=>{
+    const c = COLORS[n.light] || COLORS.off;
+    const sel = selected === n.name ? ' class="sel"' : '';
+    return '<tr' + sel + ' data-name="' + esc(n.name) + '">'
+      + '<td><span class="dot" style="color:' + c + ';background:' + c + '"></span>'
+      + '<span class="name">' + esc(n.name) + '</span>'
+      + '<span class="chip">' + esc(n.kind) + '</span>'
+      + (n.why ? '<div class="why">' + esc(n.why) + '</div>' : '') + '</td>'
+      + '<td class="num">' + esc(n.scope) + (n.stateful ? ' · 有状态' : '') + '</td>'
+      + '<td class="num">' + (n.measured ? n.tools : '?') + '</td>'
+      + '<td class="num">' + (n.measured ? n.tokens.toLocaleString() : '未测量') + '</td>'
+      + '<td class="num">' + n.calls + '</td>'
+      + '<td class="num">' + (n.lastCall || '-') + '</td>'
+      + '<td class="num">' + (n.topTool || '-') + '</td>'
+      + '<td class="why">' + LIGHT_CN[n.light] + '</td>'
+      + '<td><div class="sw' + (n.enabled ? ' on' : '') + '" data-toggle="' + esc(n.name) + '"></div></td>'
+      + '</tr>';
+  }).join('');
+
+  tb.querySelectorAll('[data-toggle]').forEach(el=>{
+    el.addEventListener('click', async (ev)=>{
+      ev.stopPropagation();
+      const name = el.getAttribute('data-toggle');
+      const on = !el.classList.contains('on');
+      el.classList.toggle('on', on);
+      await fetch('/api/toggle', {
+        method:'POST',
+        headers:{'Content-Type':'application/json','X-Capbus-Token':TOKEN},
+        body: JSON.stringify({name, on})
+      });
+      refresh();
+    });
+  });
+  tb.querySelectorAll('tr[data-name]').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      selected = (selected === el.getAttribute('data-name')) ? null : el.getAttribute('data-name');
+      renderRows();
+    });
+  });
+}
+
+const LIGHT_CN = { active:'在工作', stale:'久未用', idle:'从没调用', off:'已关闭', dead:'起不来' };
+
+function spawn(){
+  const now = performance.now();
+  for(const n of nodes){
+    if(n.light !== 'active' && n.light !== 'stale') continue;
+    const rate = n.light === 'active' ? Math.min(0.06 + n.calls*0.004, 0.5) : 0.012;
+    if(Math.random() < rate){
+      particles.push({ from:n, p:0, sp:0.004 + Math.random()*0.006, life:1 });
+    }
+  }
+  if(particles.length > 900) particles.splice(0, particles.length-900);
+}
+
+function draw(now){
+  const c = window.__center || {cx:W/2, cy:H*0.4};
+  ctx.clearRect(0,0,W,H);
+
+  // background dust
+  ctx.save();
+  for(let i=0;i<70;i++){
+    const x = (Math.sin(i*12.9898 + t0*0.00002)*0.5+0.5)*W;
+    const y = (Math.cos(i*78.233 + t0*0.000015)*0.5+0.5)*H*0.8;
+    ctx.fillStyle = 'rgba(140,170,220,' + (0.03 + (i%5)*0.006) + ')';
+    ctx.fillRect(x, y, 1.4, 1.4);
+  }
+  ctx.restore();
+
+  // edges
+  for(const n of nodes){
+    const col = COLORS[n.light] || COLORS.off;
+    ctx.strokeStyle = hexA(col, n.light==='off' ? 0.06 : 0.16);
+    ctx.lineWidth = selected === n.name ? 2 : 1;
+    ctx.beginPath();
+    ctx.moveTo(n.x, n.y);
+    ctx.lineTo(c.cx, c.cy);
+    ctx.stroke();
+  }
+
+  // particles flowing inward = calls converging on the hub
+  for(const pt of particles){
+    pt.p += pt.sp;
+    const n = pt.from;
+    const x = n.x + (c.cx - n.x) * pt.p;
+    const y = n.y + (c.cy - n.y) * pt.p;
+    const col = COLORS[n.light] || COLORS.off;
+    ctx.fillStyle = hexA(col, 0.9 * (1-pt.p));
+    ctx.beginPath();
+    ctx.arc(x, y, 2.1, 0, Math.PI*2);
+    ctx.fill();
+  }
+  particles = particles.filter(pt=>pt.p < 1);
+
+  // hub
+  const pulse = 1 + Math.sin((now-t0)*0.0016)*0.05;
+  const g = ctx.createRadialGradient(c.cx,c.cy,2,c.cx,c.cy,86*pulse);
+  g.addColorStop(0,'rgba(120,200,255,.95)');
+  g.addColorStop(.35,'rgba(70,140,255,.35)');
+  g.addColorStop(1,'rgba(40,80,180,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(c.cx,c.cy,86*pulse,0,Math.PI*2); ctx.fill();
+
+  ctx.strokeStyle = 'rgba(160,220,255,.55)';
+  ctx.lineWidth = 1.4;
+  ctx.beginPath(); ctx.arc(c.cx,c.cy,30,0,Math.PI*2); ctx.stroke();
+  ctx.fillStyle = '#dfeeff';
+  ctx.font = '600 11px "Segoe UI",sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('capbus', c.cx, c.cy + 4);
+
+  // nodes
+  for(const n of nodes){
+    const col = COLORS[n.light] || COLORS.off;
+    const r = 7 + Math.min(Math.sqrt(Math.max(n.tokens,0))/22, 7);
+    if(n.light === 'active'){
+      ctx.fillStyle = hexA(col, 0.16);
+      ctx.beginPath(); ctx.arc(n.x,n.y,r*2.6,0,Math.PI*2); ctx.fill();
+    }
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(n.x,n.y,r,0,Math.PI*2); ctx.fill();
+
+    ctx.fillStyle = selected === n.name ? '#ffffff' : 'rgba(220,232,250,.82)';
+    ctx.font = (selected === n.name ? '600 ' : '') + '11.5px "Segoe UI",sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(n.name, n.x, n.y - r - 7);
+    if(n.measured){
+      ctx.fillStyle = 'rgba(140,160,190,.7)';
+      ctx.font = '10px "Segoe UI",sans-serif';
+      ctx.fillText(n.tokens.toLocaleString() + ' tok', n.x, n.y + r + 14);
+    }
+  }
+
+  if(nodes.length === 0){
+    ctx.fillStyle = 'rgba(180,200,230,.55)';
+    ctx.font = '13px "Segoe UI",sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('还没有声明任何能力 · capbus import 或手写一份清单', c.cx, c.cy + 60);
+  }
+}
+
+function hexA(hex, a){
+  const h = hex.replace('#','');
+  const r = parseInt(h.substring(0,2),16), g = parseInt(h.substring(2,4),16), b = parseInt(h.substring(4,6),16);
+  return 'rgba(' + r + ',' + g + ',' + b + ',' + a + ')';
+}
+
+function loop(now){
+  spawn();
+  draw(now);
+  requestAnimationFrame(loop);
+}
+
+window.addEventListener('resize', resize);
+resize();
+refresh();
+setInterval(refresh, 3000);
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
