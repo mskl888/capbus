@@ -124,7 +124,7 @@ var zh = map[string]string{
 	"add one to %s":                              "在 %s 里加一个",
 	"probe failed: ":                             "探测失败: ",
 	"~%d tokens on every turn, over %d measured": "每轮约 %d tokens（已测量 %d 个）",
-	" (+%d failed to probe)":                     "（另有 %d 个探测失败）",
+	" (+%d failed to probe)":                     "；%d 个探测失败",
 	"that is a large slice of the context window: `capbus use <name>` narrows it": "这占上下文窗口很大一块：用 `capbus use <名称>` 收窄",
 	"wrote": "已写入",
 	"no agent config found - install an agent, or run `capbus doctor`": "没找到任何 Agent 的配置——先装一个 Agent，或运行 `capbus doctor`",
