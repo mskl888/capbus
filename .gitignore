@@ -1,6 +1,8 @@
 # binaries
 /capbus
 /capbus.exe
+/fake-mcp
+/fake-mcp.exe
 /dist/
 
 # local state

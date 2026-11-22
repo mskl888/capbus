@@ -31,11 +31,13 @@ const (
 )
 
 type Source struct {
-	OCI     string `yaml:"oci,omitempty"`
-	NPM     string `yaml:"npm,omitempty"`
-	Git     string `yaml:"git,omitempty"`
-	Path    string `yaml:"path,omitempty"`
-	Command string `yaml:"command,omitempty"`
+	OCI     string            `yaml:"oci,omitempty"`
+	NPM     string            `yaml:"npm,omitempty"`
+	Git     string            `yaml:"git,omitempty"`
+	Path    string            `yaml:"path,omitempty"`
+	Command string            `yaml:"command,omitempty"`
+	Args    []string          `yaml:"args,omitempty"`
+	Env     map[string]string `yaml:"env,omitempty"`
 }
 
 type Permissions struct {

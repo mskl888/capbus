@@ -68,29 +68,41 @@ type entry struct {
 	Env     map[string]string `json:"env,omitempty"`
 }
 
-func toEntry(m manifest.Manifest) (entry, error) {
-	switch {
-	case m.Source.NPM != "":
-		return entry{Command: "npx", Args: []string{"-y", m.Source.NPM}}, nil
-	case m.Source.OCI != "":
-		return entry{Command: "docker", Args: []string{"run", "-i", "--rm", m.Source.OCI}}, nil
-	case m.Source.Command != "":
-		return entry{Command: m.Source.Command}, nil
-	case m.Source.Path != "":
-		return entry{Command: m.Source.Path}, nil
-	case m.Source.Git != "":
-		return entry{}, fmt.Errorf("%s: git sources are not supported yet", m.Name)
+// Options controls how agent configs are written.
+type Options struct {
+	// DryRun reports what would change without touching a file.
+	DryRun bool
+	// Shared points global capabilities at `capbus bridge` instead of spawning
+	// a backend inside every agent. This is what turns N processes into one.
+	Shared bool
+}
+
+func selfExe() string {
+	if p, err := os.Executable(); err == nil {
+		return p
 	}
-	return entry{}, fmt.Errorf("%s: no source", m.Name)
+	return "capbus"
+}
+
+func toEntry(m manifest.Manifest, opts Options, exe string) (entry, error) {
+	if opts.Shared && m.Scope == manifest.ScopeGlobal {
+		return entry{Command: exe, Args: []string{"bridge", m.Name}}, nil
+	}
+	name, args, err := m.Command()
+	if err != nil {
+		return entry{}, err
+	}
+	return entry{Command: name, Args: args}, nil
 }
 
 // Render produces the config body for one agent. Existing keys in the config
 // file are preserved; only the capability map it owns is rewritten. That keeps
 // capbus from eating settings the agent wrote for itself.
-func Render(a Agent, ms []manifest.Manifest) ([]byte, error) {
+func Render(a Agent, ms []manifest.Manifest, opts Options) ([]byte, error) {
+	exe := selfExe()
 	servers := map[string]entry{}
 	for _, m := range ms {
-		e, err := toEntry(m)
+		e, err := toEntry(m, opts, exe)
 		if err != nil {
 			return nil, err
 		}
@@ -110,8 +122,8 @@ func Render(a Agent, ms []manifest.Manifest) ([]byte, error) {
 	return json.MarshalIndent(root, "", "  ")
 }
 
-// Sync writes every detected agent's config. With dryRun it only reports.
-func Sync(ms []manifest.Manifest, dryRun bool) ([]string, []error) {
+// Sync writes every detected agent's config.
+func Sync(ms []manifest.Manifest, opts Options) ([]string, []error) {
 	var wrote []string
 	var errs []error
 	for _, a := range Agents() {
@@ -119,12 +131,12 @@ func Sync(ms []manifest.Manifest, dryRun bool) ([]string, []error) {
 		if !ok {
 			continue
 		}
-		body, err := Render(a, ms)
+		body, err := Render(a, ms, opts)
 		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
-		if dryRun {
+		if opts.DryRun {
 			wrote = append(wrote, fmt.Sprintf("%s (%s, %d bytes, dry-run)", a.Name(), p, len(body)))
 			continue
 		}
