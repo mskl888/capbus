@@ -29,6 +29,37 @@ capbus 做三件事，只做这三件：
 
 ---
 
+## 坦诚对比：你该选哪个
+
+capbus 不是所有人的答案。先说清楚什么时候**不要**用它：
+
+| 你的情况 | 更好的选择 |
+|---|---|
+| 只有一个 Agent，想装几个插件 | 直接用那个 Agent 自己的插件市场，别加中间层 |
+| 需要云端托管、团队共享、SSO | 用企业网关（Kong、Casdoor、jarvis-registry） |
+| 只要浏览器自动化 | 直接装 Playwright MCP，capbus 帮不上忙 |
+| 想让 AI 记住事情 | 用记忆系统（如 [agent-memory](https://github.com/yb-zhai/agent-memory)），capbus 只负责把它接进来，并保证只有一个实例 |
+
+**那什么时候用 capbus？** 同时满足这三条：
+
+1. 一台机器上有**两个以上** Agent（Claude Code / Cursor / Codex / DSH …）
+2. 你发现同一个插件装了三四遍，或者根本不知道**它到底有没有被调用过**
+3. 你不想为"没在用"的插件每轮付 token
+
+三条只中一条，capbus 带来的复杂度就不划算。
+
+## 不做什么
+
+边界比功能重要。capbus **明确不做**：
+
+- ❌ **不做 MCP 商店 / 目录站。** 已有十几万个 server 被 Glama、Smithery、PulseMCP 索引完毕（见 [MARKET.md](MARKET.md)）。
+- ❌ **不做通用网关 / 路由 / 多 provider 负载均衡。** 已有数千个项目在做，包括 Kong 和 OmniRoute。
+- ❌ **不做 Agent 框架。** 不实现 loop、不管理对话、不碰提示词。
+- ❌ **不代理模型流量。** 模型接入是你的 Agent 自己的事。
+- ❌ **不做第二个记忆系统。** 记忆是能力，不是插座的功能。
+
+一句话：**别人做"让 Agent 连上工具"，capbus 做"让你不用为每个 Agent 再配一遍，并且知道它到底有没有在工作"。**
+
 ## 它是怎么做到“一个进程”的
 
 ```
