@@ -137,7 +137,7 @@ async function refresh(){
     layout();
     renderRows();
     document.getElementById('findings').innerHTML =
-      s.findings.slice(0,3).map(f=>'<b>' + esc(f) + '</b>').join(' · ');
+      (s.findings || []).slice(0,3).map(f=>'<b>' + esc(f) + '</b>').join(' · ');
   }catch(e){
     document.getElementById('err').textContent = '连接已断开';
   }
