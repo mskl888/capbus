@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/capbus/capbus/internal/importscan"
 	"github.com/capbus/capbus/internal/manifest"
 	"github.com/capbus/capbus/internal/materialize"
 	"github.com/capbus/capbus/internal/mcpserver"
@@ -24,6 +25,7 @@ import (
 	"github.com/capbus/capbus/internal/registry"
 	"github.com/capbus/capbus/internal/secret"
 	"github.com/capbus/capbus/internal/supervise"
+	yaml "gopkg.in/yaml.v3"
 )
 
 const version = "0.4.0-dev"
@@ -56,6 +58,8 @@ func main() {
 		os.Exit(mcpCmd())
 	case "init":
 		os.Exit(initCmd())
+	case "import":
+		os.Exit(importCmd(os.Args[2:]))
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -79,6 +83,7 @@ usage:
   capbus secret <cmd>        manage credentials: list|set|get|rm
   capbus mcp                 run capbus as an MCP server (agents drive it)
   capbus init                setup check with the exact next steps
+  capbus import [--dry-run]  adopt MCP servers already configured in any agent
   capbus version
 
   --shared  point global capabilities at the shared backend instead of
@@ -652,4 +657,94 @@ func initCmd() int {
 	}
 	// Nothing here is fatal, so this is guidance and exits 0.
 	return 0
+}
+
+// importCmd adopts MCP servers that already exist in some agent's config, so
+// the user does not hand-copy YAML for plugins they installed months ago.
+func importCmd(args []string) int {
+	dryRun := false
+	for _, a := range args {
+		switch a {
+		case "--dry-run", "-n":
+			dryRun = true
+		default:
+			fmt.Fprintf(os.Stderr, "capbus import: unknown flag %q\n", a)
+			return 2
+		}
+	}
+
+	findings := importscan.Discover()
+	if len(findings) == 0 {
+		fmt.Println("nothing found: no MCP servers in any agent config on this machine")
+		return 0
+	}
+
+	existing, _ := registry.Load()
+	declared := map[string]bool{}
+	for _, m := range existing {
+		declared[m.Name] = true
+	}
+
+	fmt.Printf("found %d MCP server(s) already on this machine\n\n", len(findings))
+	fmt.Printf("%-22s %-10s %s\n", "NAME", "FROM", "COMMAND")
+	var added, skipped []string
+	for _, f := range findings {
+		cmdline := strings.TrimSpace(f.Command + " " + strings.Join(f.Args, " "))
+		mark := "new"
+		if declared[f.Name] {
+			mark = "declared"
+			skipped = append(skipped, f.Name)
+		}
+		fmt.Printf("%-22s %-10s %s\n", f.Name, f.Origin, truncate(cmdline, 70))
+		if mark == "declared" {
+			continue
+		}
+
+		m := manifest.Manifest{
+			Name:        f.Name,
+			Description: "Imported from " + f.Origin,
+			Kind:        manifest.KindMCP,
+			Scope:       manifest.ScopeGlobal,
+			Source:      manifest.Source{Command: f.Command, Args: f.Args, Env: f.Env},
+		}
+		if err := m.Validate(); err != nil {
+			fmt.Fprintf(os.Stderr, "  skip %s: %v\n", f.Name, err)
+			continue
+		}
+		body, err := yaml.Marshal(m)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  skip %s: %v\n", f.Name, err)
+			continue
+		}
+		if !dryRun {
+			if err := os.MkdirAll(registry.Dir(), 0o755); err != nil {
+				fmt.Fprintf(os.Stderr, "capbus import: %v\n", err)
+				return 1
+			}
+			p := filepath.Join(registry.Dir(), f.Name+".yaml")
+			if err := os.WriteFile(p, body, 0o600); err != nil {
+				fmt.Fprintf(os.Stderr, "capbus import: %v\n", err)
+				return 1
+			}
+		}
+		added = append(added, f.Name)
+	}
+
+	if dryRun {
+		fmt.Printf("\ndry run: would import %d, skip %d already declared\n", len(added), len(skipped))
+		return 0
+	}
+	fmt.Printf("\nimported %d, skipped %d already declared\n", len(added), len(skipped))
+	if len(added) > 0 {
+		fmt.Println("\nnext:")
+		fmt.Println("  capbus sync     # make every agent see all of them")
+	}
+	return 0
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n-1] + "…"
 }
