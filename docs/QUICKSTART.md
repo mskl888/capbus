@@ -17,19 +17,37 @@
 
 ### 第一步：装 capbus
 
-**Windows**（PowerShell）：
+> ⚠️ **当前还没有发布 release**，所以下面的一行安装暂时不可用。
+> 在那之前，用「从源码构建」的方式（需要先装 Go，这确实违背本文档的初衷——
+> 一键安装脚本是下一步要做的事）。
+
+**从源码构建**（需要 Go 1.22+）：
+
+```bash
+git clone https://github.com/mskl888/capbus.git
+cd capbus
+go build -o capbus ./cmd/capbus
+```
+
+Windows：
 
 ```powershell
+git clone https://github.com/mskl888/capbus.git
+cd capbus
+go build -o capbus.exe ./cmd/capbus
+```
+
+**发布之后**，这两行会取代上面的步骤：
+
+```bash
+# Linux / macOS
+curl -fsSL https://github.com/mskl888/capbus/releases/latest/download/install.sh | sh
+
+# Windows (PowerShell)
 irm https://github.com/mskl888/capbus/releases/latest/download/install.ps1 | iex
 ```
 
-**Linux / macOS**：
-
-```bash
-curl -fsSL https://github.com/mskl888/capbus/releases/latest/download/install.sh | sh
-```
-
-**你不需要装 Go，也不用会编译。** 装完在终端里敲：
+装完在终端里敲：
 
 ```bash
 capbus version
