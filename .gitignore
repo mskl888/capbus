@@ -1,0 +1,13 @@
+# binaries
+/capbus
+/capbus.exe
+/dist/
+
+# local state
+.capbus/
+*.test
+
+# editors
+.vscode/
+.idea/
+.DS_Store

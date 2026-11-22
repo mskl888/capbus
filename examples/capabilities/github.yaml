@@ -1,0 +1,13 @@
+name: github
+description: GitHub API access — issues, PRs, code search.
+kind: mcp
+scope: global
+placement: host
+source:
+  npm: "@modelcontextprotocol/server-github"
+permissions:
+  egress: [api.github.com]
+  secrets: [GITHUB_TOKEN]
+health:
+  probe: tools/list
+  interval: 30s

@@ -1,0 +1,13 @@
+# Holds a live browser session, so it must not be global: two agents sharing one
+# browser would take over each other's pages. capbus rejects scope: global here.
+name: playwright
+description: Browser automation with a live browser session.
+kind: mcp
+scope: workspace
+stateful: true
+placement: workspace
+source:
+  npm: "@playwright/mcp"
+permissions:
+  egress: ["*"]
+  secrets: []
