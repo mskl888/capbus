@@ -65,6 +65,11 @@ type Manifest struct {
 	// desktop, a shell). A stateful capability must never be global: two
 	// agents sharing one browser session will fight over it.
 	Stateful bool `yaml:"stateful,omitempty"`
+	// Shared means the capability is useless unless every agent talks to the
+	// same process: a memory store, a cache, a queue. capbus writes the bridge
+	// shim even without --shared, and sync refuses to write per-agent copies
+	// that would silently diverge.
+	Shared bool `yaml:"shared,omitempty"`
 	// Always keeps a capability switched on in "default" mode: the ones you
 	// want available whatever else is turned off.
 	Always      bool        `yaml:"always,omitempty"`

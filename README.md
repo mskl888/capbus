@@ -201,6 +201,39 @@ permissions:
 
 ---
 
+## 跨 Agent 共享（记忆、缓存、队列）
+
+有些能力**只有一份才有意义**：记忆库、缓存、任务队列。两个 Agent 各有一份，它们的状态就会悄悄分叉——而且不会报错。
+
+给它加上 `shared: true`：
+
+```yaml
+name: memory
+kind: mcp
+scope: global
+shared: true              # 只有一份，所有 Agent 连同一个进程
+source:
+  command: 'C:\path\to\memory-mcp.exe'
+```
+
+然后：
+
+```bash
+capbus supervise          # 一个后端，一份数据
+capbus sync               # 每个 Agent 都拿到 bridge，指向它
+```
+
+**忘了开后端会怎样？** `sync` 会直接拒绝，而不是静默写一份各自的副本：
+
+```
+capbus sync: these capabilities must be shared, but no shared backend is running:
+  memory
+Start `capbus supervise` first. Writing per-agent copies would let their state diverge silently.
+```
+
+这就是这个字段存在的全部理由：**让"记忆分叉"变成一个必须解决的错误，而不是一个几个月后才发现的现象。**
+
+和"多个进程共用一个 JSONL 文件"相比，这里只有一个进程，不存在"把它加载进内存、看不到别人的更新、要重启才同步"的问题。
 ## 许可证
 
 **Apache-2.0**。见 [LICENSE](LICENSE)。

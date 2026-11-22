@@ -301,6 +301,17 @@ func syncCmd(args []string) int {
 	// A disabled capability is not written at all, so its tool schemas never
 	// reach a model's context. Filtering after writing would save nothing.
 	ms = enabled.Filter(ms)
+	// A shared capability has no meaning without one process behind it: each
+	// agent would keep its own copy and the two would drift apart with no error.
+	if shared := requiredShared(ms); len(shared) > 0 {
+		if st, err := supervise.LoadState(); err != nil || len(st.Capabilities) == 0 {
+			fmt.Fprintf(os.Stderr,
+				"capbus sync: these capabilities must be shared, but no shared backend is running:\n  %s\n"+
+					"Start `capbus supervise` first. Writing per-agent copies would let their state diverge silently.\n",
+				strings.Join(shared, "\n  "))
+			return 1
+		}
+	}
 	wrote, syncErrs := materialize.Sync(ms, opts)
 	for _, e := range syncErrs {
 		fmt.Fprintf(os.Stderr, "! %v\n", e)
@@ -1335,4 +1346,16 @@ func uiCmd(args []string) int {
 	}
 	fmt.Println("\n" + i18n.T("panel closed"))
 	return 0
+}
+
+// requiredShared lists enabled capabilities that only work when every agent
+// talks to one process.
+func requiredShared(ms []manifest.Manifest) []string {
+	var out []string
+	for _, m := range ms {
+		if m.Shared {
+			out = append(out, m.Name)
+		}
+	}
+	return out
 }

@@ -172,7 +172,18 @@ func (s *Server) sync(shared bool) (string, bool) {
 				"or call capbus_sync with shared=false.", false
 		}
 	}
-	wrote, syncErrs := materialize.Sync(enabled.Filter(ms), materialize.Options{Shared: shared})
+	effective := enabled.Filter(ms)
+	for _, m := range effective {
+		if !m.Shared {
+			continue
+		}
+		if st, err := supervise.LoadState(); err != nil || len(st.Capabilities) == 0 {
+			return "error: capability " + m.Name + " must be shared, but no shared backend is running. " +
+				"Ask the user to run `capbus supervise`; per-agent copies would diverge silently.", false
+		}
+		break
+	}
+	wrote, syncErrs := materialize.Sync(effective, materialize.Options{Shared: shared})
 	var b strings.Builder
 	for _, w := range wrote {
 		b.WriteString("wrote " + w + "\n")

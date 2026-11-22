@@ -59,7 +59,9 @@ func selfExe() string {
 // command. That keeps credentials out of agent configs entirely: the shim
 // resolves secrets at spawn time, in memory.
 func toEntry(m manifest.Manifest, opts Options, exe string) entry {
-	if opts.Shared && m.Scope == manifest.ScopeGlobal {
+	// A capability marked shared must reach one process even when the user ran
+	// a plain sync: a second copy would be a second, silently divergent store.
+	if m.Shared || (opts.Shared && m.Scope == manifest.ScopeGlobal) {
 		return entry{Command: exe, Args: []string{"bridge", m.Name}}
 	}
 	return entry{Command: exe, Args: []string{"exec", m.Name}}

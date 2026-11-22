@@ -254,3 +254,17 @@ func TestSyncDryRunWritesNothing(t *testing.T) {
 		t.Fatal("dry run modified the file")
 	}
 }
+
+// A capability marked shared must reach one process even when the user ran a
+// plain sync: a second copy would be a second, silently divergent store.
+func TestSharedCapabilityAlwaysUsesBridge(t *testing.T) {
+	m := capSet()[0]
+	m.Shared = true
+	if e := toEntry(m, Options{}, "/x/capbus"); len(e.Args) != 2 || e.Args[0] != "bridge" {
+		t.Fatalf("shared capability must use the bridge without --shared, got %+v", e)
+	}
+	m.Shared = false
+	if e := toEntry(m, Options{}, "/x/capbus"); e.Args[0] != "exec" {
+		t.Fatalf("an unshared capability should spawn its own copy, got %+v", e)
+	}
+}
