@@ -136,4 +136,10 @@ var zh = map[string]string{
 	"on":                                                               "开",
 	"off":                                                              "关",
 	"[off]":                                                            "[关]",
+	"recording tool calls (metadata only) to":                          "正在记录工具调用（只记元数据）到",
+	"clear it any time with: capbus activity --clear":                  "随时可用 capbus activity --clear 清空",
+	"activity log cleared":                                             "调用记录已清空",
+	"action log cleared":                                               "动作记录已清空",
+	"capbus has not changed anything yet":                              "capbus 还没有改动过任何东西",
+	"log file: ":                                                       "记录文件：",
 }

@@ -139,3 +139,12 @@ func Summarize(events []Event) map[string]*Summary {
 	}
 	return out
 }
+
+// Clear removes the log. A record the user cannot clear is surveillance.
+func Clear() error {
+	err := os.Remove(Path())
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}

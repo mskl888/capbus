@@ -21,6 +21,7 @@ import (
 
 	"github.com/capbus/capbus/internal/activity"
 	"github.com/capbus/capbus/internal/adopt"
+	"github.com/capbus/capbus/internal/audit"
 	"github.com/capbus/capbus/internal/enabled"
 	"github.com/capbus/capbus/internal/i18n"
 	"github.com/capbus/capbus/internal/importscan"
@@ -84,6 +85,8 @@ func main() {
 		os.Exit(scanCmd())
 	case "activity":
 		os.Exit(activityCmd(os.Args[2:]))
+	case "log":
+		os.Exit(logCmd(os.Args[2:]))
 	case "adopt":
 		os.Exit(adoptCmd(os.Args[2:]))
 	case "undo":
@@ -121,6 +124,7 @@ usage:
   capbus cost [--refresh]    measure what each capability costs per turn
   capbus scan                read-only diagnosis: what is wrong and what it costs
   capbus activity [--tail N] what capabilities were actually called
+  capbus log [--tail N]      what capbus itself changed on this machine
   capbus adopt [--apply] <name>  take over an MCP server an agent installed
   capbus undo                reverse the last adopt
   capbus ui [--no-open]      open the local dashboard
@@ -328,6 +332,7 @@ func syncCmd(args []string) int {
 	for _, w := range wrote {
 		fmt.Println(i18n.T("wrote") + " " + w)
 	}
+	_ = audit.Append("sync", fmt.Sprintf("%d capabilities -> %d files", len(ms), len(wrote)))
 	if len(ms) > 0 {
 		names := make([]string, 0, len(ms))
 		for _, m := range ms {
@@ -389,6 +394,9 @@ func superviseCmd() int {
 	}()
 
 	fmt.Printf("supervising %d capability(ies); Ctrl-C to stop\n", len(d.State().Capabilities))
+	fmt.Println(i18n.T("recording tool calls (metadata only) to") + " " + activity.Path())
+	fmt.Println(i18n.T("clear it any time with: capbus activity --clear"))
+	_ = audit.Append("supervise", fmt.Sprintf("%d capabilities", len(d.State().Capabilities)))
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt)
 	<-sig
@@ -923,6 +931,14 @@ func activityCmd(args []string) int {
 	n := 50
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--clear":
+			if err := activity.Clear(); err != nil {
+				fmt.Fprintf(os.Stderr, "capbus activity: %v\n", err)
+				return 1
+			}
+			_ = audit.Append("activity-clear", "user cleared the call log")
+			fmt.Println(i18n.T("activity log cleared"))
+			return 0
 		case "--tail":
 			if i+1 >= len(args) {
 				fmt.Fprintln(os.Stderr, "capbus activity: --tail needs a number")
@@ -1066,6 +1082,7 @@ func toggleCmd(args []string, on bool) int {
 		fmt.Fprintf(os.Stderr, "capbus %s: %v\n", verb, err)
 		return 1
 	}
+	_ = audit.Append("toggle", fmt.Sprintf("%s=%v", name, on))
 	if on {
 		fmt.Printf("%s is on; run `capbus sync` to write it into your agents\n", name)
 	} else {
@@ -1415,5 +1432,53 @@ func injectCmd(args []string) int {
 		fmt.Println("  " + s)
 	}
 	fmt.Println("\nrestart the agent for this to take effect. to reverse: capbus undo")
+	return 0
+}
+
+// logCmd prints what capbus itself did: which files it rewrote, which
+// capability it toggled, when it started hosting backends.
+func logCmd(args []string) int {
+	n := 40
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--tail":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "capbus log: --tail needs a number")
+				return 2
+			}
+			i++
+			v, err := strconv.Atoi(args[i])
+			if err != nil || v <= 0 {
+				fmt.Fprintf(os.Stderr, "capbus log: bad tail %q\n", args[i])
+				return 2
+			}
+			n = v
+		case "--clear":
+			if err := audit.Clear(); err != nil {
+				fmt.Fprintf(os.Stderr, "capbus log: %v\n", err)
+				return 1
+			}
+			fmt.Println(i18n.T("action log cleared"))
+			return 0
+		default:
+			fmt.Fprintf(os.Stderr, "capbus log: unknown flag %q\n", args[i])
+			return 2
+		}
+	}
+
+	entries, err := audit.Tail(n)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "capbus log: %v\n", err)
+		return 1
+	}
+	if len(entries) == 0 {
+		fmt.Println(i18n.T("capbus has not changed anything yet"))
+		return 0
+	}
+	for _, e := range entries {
+		fmt.Printf("%s  %-14s %s\n", e.Time.Format("01-02 15:04:05"), e.Kind, e.Detail)
+	}
+	fmt.Println()
+	fmt.Println(i18n.T("log file: ") + audit.Path())
 	return 0
 }
