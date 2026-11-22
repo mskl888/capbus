@@ -90,6 +90,8 @@ func main() {
 		os.Exit(undoCmd())
 	case "ui":
 		os.Exit(uiCmd(os.Args[2:]))
+	case "inject":
+		os.Exit(injectCmd(os.Args[2:]))
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -122,6 +124,7 @@ usage:
   capbus adopt [--apply] <name>  take over an MCP server an agent installed
   capbus undo                reverse the last adopt
   capbus ui [--no-open]      open the local dashboard
+  capbus inject [--apply] <name>  put a capbus capability into the agent profile
   capbus version
 
   --shared  point global capabilities at the shared backend instead of
@@ -1358,4 +1361,59 @@ func requiredShared(ms []manifest.Manifest) []string {
 		}
 	}
 	return out
+}
+
+// injectCmd puts a capability capbus already owns into the agent's profile
+// patch. The difference from adopt: there is no plugin to switch off, because
+// nothing installed this one except capbus.
+func injectCmd(args []string) int {
+	apply := false
+	name := ""
+	for _, a := range args {
+		switch {
+		case a == "--apply":
+			apply = true
+		case strings.HasPrefix(a, "-"):
+			fmt.Fprintf(os.Stderr, "capbus inject: unknown flag %q\n", a)
+			return 2
+		default:
+			name = a
+		}
+	}
+	if name == "" {
+		fmt.Fprintln(os.Stderr, "usage: capbus inject [--apply] <capability>")
+		return 2
+	}
+
+	pl, err := adopt.PlanFromCapability(name)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "capbus inject: %v\n", err)
+		return 1
+	}
+
+	fmt.Printf("inject plan for %s\n\n", name)
+	fmt.Printf("  command      %s %s\n", pl.Command, strings.Join(pl.Args, " "))
+	if pl.Cwd != "" {
+		fmt.Printf("  workdir      %s\n", pl.Cwd)
+	}
+	fmt.Printf("  profile      %s\n\n", pl.ProfilePatch)
+	fmt.Println("this entry will be appended to the profile patch:")
+	fmt.Println(pl.Block())
+
+	if !apply {
+		fmt.Println("dry run: nothing was written. add --apply to inject.")
+		return 0
+	}
+
+	steps, err := adopt.Apply(pl)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "capbus inject: %v\n", err)
+		return 1
+	}
+	fmt.Println("done:")
+	for _, s := range steps {
+		fmt.Println("  " + s)
+	}
+	fmt.Println("\nrestart the agent for this to take effect. to reverse: capbus undo")
+	return 0
 }

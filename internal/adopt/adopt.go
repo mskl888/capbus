@@ -191,6 +191,53 @@ func saveUndo(f *undoFile) error {
 	return os.WriteFile(undoPath(), b, 0o600)
 }
 
+// PlanFromCapability builds a plan for a capability that capbus already owns,
+// with no native copy to disable. This is how a capability that was never
+// installed inside an agent gets into that agent.
+//
+// A shared capability is injected as `capbus bridge`, never as its own command:
+// letting the agent spawn the server itself would create the second instance
+// that sharing exists to prevent.
+func PlanFromCapability(name string) (Plan, error) {
+	ms, _ := registry.Load()
+	var found *manifest.Manifest
+	for _, m := range ms {
+		if m.Name == name {
+			c := m
+			found = &c
+			break
+		}
+	}
+	if found == nil {
+		return Plan{}, fmt.Errorf("no capability named %q; declare it in %s first", name, registry.Dir())
+	}
+	profile, err := ProfilePatch()
+	if err != nil {
+		return Plan{}, err
+	}
+
+	p := Plan{Server: name, Plugin: "capbus", ProfilePatch: profile}
+	if found.Shared {
+		p.Command = selfExe()
+		p.Args = []string{"bridge", name}
+	} else {
+		bin, args, err := found.Command()
+		if err != nil {
+			return Plan{}, err
+		}
+		p.Command, p.Args = bin, args
+	}
+	p.Cwd = found.WorkDir()
+	return p, nil
+}
+
+func selfExe() string {
+	if p, err := os.Executable(); err == nil {
+		return p
+	}
+	return "capbus"
+}
+
 // Apply performs the handover. Every file it touches is backed up first, and
 // the record needed to reverse it is written before the second edit lands.
 func Apply(p Plan) ([]string, error) {
@@ -200,22 +247,31 @@ func Apply(p Plan) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read profile patch: %w", err)
 	}
-	pkgBody, err := os.ReadFile(p.PackagePatch)
-	if err != nil {
-		return nil, fmt.Errorf("read plugin patch: %w", err)
+
+	// A capability capbus already owns has no native row to switch off.
+	var pkgBody []byte
+	if p.PackagePatch != "" {
+		pkgBody, err = os.ReadFile(p.PackagePatch)
+		if err != nil {
+			return nil, fmt.Errorf("read plugin patch: %w", err)
+		}
 	}
 
 	profileBackup := p.ProfilePatch + ".capbus-backup-" + stamp
-	pkgBackup := p.PackagePatch + ".capbus-backup-" + stamp
 	if err := os.WriteFile(profileBackup, profileBody, 0o600); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(pkgBackup, pkgBody, 0o600); err != nil {
-		return nil, err
-	}
-
 	var steps []string
-	steps = append(steps, "backed up "+profileBackup, "backed up "+pkgBackup)
+	steps = append(steps, "backed up "+profileBackup)
+
+	var pkgBackup string
+	if p.PackagePatch != "" {
+		pkgBackup = p.PackagePatch + ".capbus-backup-" + stamp
+		if err := os.WriteFile(pkgBackup, pkgBody, 0o600); err != nil {
+			return nil, err
+		}
+		steps = append(steps, "backed up "+pkgBackup)
+	}
 
 	// 1. capbus's entry goes in first: the capability must exist before the
 	//    original stops being loaded.
@@ -225,9 +281,10 @@ func Apply(p Plan) ([]string, error) {
 	}
 	steps = append(steps, "added capbus entry to "+p.ProfilePatch)
 
-	// 2. then the original row is switched off.
-	disabled, changed := disableRow(string(pkgBody), p.RowID)
-	if !changed {
+	// 2. then the original row is switched off, when there is one.
+	if p.PackagePatch == "" {
+		steps = append(steps, "no native plugin to disable: capbus already owns this capability")
+	} else if disabled, changed := disableRow(string(pkgBody), p.RowID); !changed {
 		steps = append(steps, "warning: could not find row "+p.RowID+" to disable; do it by hand")
 	} else if err := os.WriteFile(p.PackagePatch, []byte(disabled), 0o600); err != nil {
 		return nil, err
