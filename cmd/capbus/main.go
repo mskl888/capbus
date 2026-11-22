@@ -24,7 +24,7 @@ import (
 	"github.com/capbus/capbus/internal/supervise"
 )
 
-const version = "0.3.0-dev"
+const version = "0.4.0-dev"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -104,14 +104,14 @@ func doctor() int {
 
 	fmt.Println("\nagents")
 	for _, a := range materialize.Agents() {
-		p, detected := a.Path()
+		detected := a.Detect()
 		status := "not installed"
 		if detected {
 			status = "ok"
 		} else {
 			ok = false
 		}
-		fmt.Printf("  %-16s %-8s %s\n", a.Name(), status, p)
+		fmt.Printf("  %-16s %-14s %s\n", a.Name(), status, a.Location())
 	}
 
 	fmt.Println("\nsecrets")

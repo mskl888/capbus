@@ -119,9 +119,43 @@ capbus exec: github: missing secret(s) GITHUB_TOKEN — set with `capbus secret 
 | `capbus exec <name>` | 以子进程方式运行一个能力，并注入它的密钥 |
 | `capbus secret list/set/get/rm` | 管理加密的凭据库 |
 
-支持的 Agent（`mcpServers` 方言）：**Claude Code、Cursor**。
+支持的 Agent：
 
-尚未实现：Codex（TOML）与 DSH 适配器、`capbus install`（远端安装）、`capbus diff`（配置漂移）、`workspace` 作用域的进程托管。
+| Agent | 方言 | 写入位置 |
+|---|---|---|
+| Claude Code | JSON `mcpServers` | `~/.claude.json` |
+| Cursor | JSON `mcpServers` | `~/.cursor/mcp.json` |
+| Codex | TOML `[mcp_servers.<name>]` | `~/.codex/config.toml` |
+| DSH | bundle（`package.json` + `cordis.patch.yml`） | `~/.capbus/dsh-bundle/` |
+
+同一份清单，四种产出：
+
+```toml
+# ~/.codex/config.toml
+[mcp_servers.github]
+args = ['exec', 'github']
+command = '/usr/local/bin/capbus'
+```
+
+```yaml
+# ~/.capbus/dsh-bundle/cordis.patch.yml
+- insert:
+    - id: 'capbus-github'
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: 'github'
+        transport: stdio
+        command: '/usr/local/bin/capbus'
+        args: ['exec', 'github']
+        failOnStartupError: true
+```
+
+两个注意事项：
+
+- **DSH 的 bundle 需要你自己安装一次**——它会改动 profile，capbus 不替你做。
+- **Codex 的 TOML 是整文件重写**，注释会丢。无法解析的配置文件一律拒绝改写，不会静默覆盖。
+
+尚未实现：`capbus install`（远端安装）、`capbus diff`（配置漂移）、`workspace` 作用域的进程托管。
 
 ---
 

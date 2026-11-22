@@ -3,6 +3,7 @@ package manifest
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/capbus/capbus/internal/secret"
@@ -41,23 +42,42 @@ func (m *Manifest) EnvList() []string {
 // declares. Secrets come from the encrypted store, so no agent config ever
 // holds a credential.
 func (m *Manifest) ResolveEnv() ([]string, error) {
-	env := append(os.Environ(), m.EnvList()...)
-	if len(m.Permissions.Secrets) == 0 {
-		return env, nil
+	vars := map[string]string{}
+	for _, kv := range os.Environ() {
+		if i := strings.IndexByte(kv, '='); i > 0 {
+			vars[kv[:i]] = kv[i+1:]
+		}
 	}
-	st, err := secret.Open()
-	if err != nil {
-		return nil, err
+	// Manifest env must override the inherited value. Appending would not do
+	// it: libc's getenv returns the first match, so the inherited one wins.
+	for k, v := range m.Source.Env {
+		vars[k] = v
 	}
-	vals, missing, err := st.Resolve(m.Permissions.Secrets)
-	if err != nil {
-		return nil, err
+
+	if len(m.Permissions.Secrets) > 0 {
+		st, err := secret.Open()
+		if err != nil {
+			return nil, err
+		}
+		vals, missing, err := st.Resolve(m.Permissions.Secrets)
+		if err != nil {
+			return nil, err
+		}
+		if len(missing) > 0 {
+			return nil, fmt.Errorf("%s: missing secret(s) %s — set with `capbus secret set <NAME>`",
+				m.Name, strings.Join(missing, ", "))
+		}
+		for k, v := range vals {
+			vars[k] = v
+		}
 	}
-	if len(missing) > 0 {
-		return nil, fmt.Errorf("%s: missing secret(s) %s — set with `capbus secret set <NAME>`",
-			m.Name, strings.Join(missing, ", "))
+
+	out := make([]string, 0, len(vars))
+	for k, v := range vars {
+		out = append(out, k+"="+v)
 	}
-	return append(env, secret.EnvList(vals)...), nil
+	sort.Strings(out)
+	return out, nil
 }
 
 // Executable returns a runnable path for the capability, used by doctor output.
