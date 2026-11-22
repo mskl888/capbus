@@ -37,6 +37,13 @@ func callTool(id int, name, args string) string {
 		name + `","arguments":` + args + `}}`
 }
 
+// registerArgs encodes the argument object properly: a YAML manifest may
+// legitimately contain quotes, and hand-concatenated JSON would corrupt it.
+func registerArgs(manifest string) string {
+	b, _ := json.Marshal(map[string]string{"manifest": manifest})
+	return string(b)
+}
+
 func textOf(t *testing.T, m proto.Message) string {
 	t.Helper()
 	var res struct {
@@ -110,9 +117,10 @@ func TestToolsList(t *testing.T) {
 func TestRegisterThenList(t *testing.T) {
 	t.Setenv("CAPBUS_HOME", filepath.Join(t.TempDir(), ".capbus"))
 
-	manifest := `name: fs\nkind: mcp\nscope: global\nsource:\n  npm: @modelcontextprotocol/server-filesystem\n`
+	// '@' cannot start a YAML plain scalar, so the package name must be quoted.
+	manifest := "name: fs\nkind: mcp\nscope: global\nsource:\n  npm: \"@modelcontextprotocol/server-filesystem\"\n"
 	msgs := run(t,
-		callTool(1, "capbus_register", `{"manifest":"`+manifest+`"}`),
+		callTool(1, "capbus_register", registerArgs(manifest)),
 		callTool(2, "capbus_list", `{}`),
 	)
 	if isError(t, msgs[0]) {
@@ -128,8 +136,8 @@ func TestRegisterThenList(t *testing.T) {
 func TestRegisterRejectsStatefulGlobal(t *testing.T) {
 	t.Setenv("CAPBUS_HOME", filepath.Join(t.TempDir(), ".capbus"))
 
-	m := `name: browser\nkind: mcp\nscope: global\nstateful: true\nsource:\n  npm: @playwright/mcp\n`
-	msgs := run(t, callTool(1, "capbus_register", `{"manifest":"`+m+`"}`))
+	m := "name: browser\nkind: mcp\nscope: global\nstateful: true\nsource:\n  npm: \"@playwright/mcp\"\n"
+	msgs := run(t, callTool(1, "capbus_register", registerArgs(m)))
 	if !isError(t, msgs[0]) {
 		t.Fatal("stateful + global must be rejected over MCP too")
 	}
