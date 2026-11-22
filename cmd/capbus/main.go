@@ -25,6 +25,7 @@ import (
 	"github.com/capbus/capbus/internal/probe"
 	"github.com/capbus/capbus/internal/proto"
 	"github.com/capbus/capbus/internal/registry"
+	"github.com/capbus/capbus/internal/scan"
 	"github.com/capbus/capbus/internal/secret"
 	"github.com/capbus/capbus/internal/supervise"
 	cost "github.com/capbus/capbus/internal/usage"
@@ -71,6 +72,8 @@ func main() {
 		os.Exit(useCmd(os.Args[2:]))
 	case "cost":
 		os.Exit(costCmd(os.Args[2:]))
+	case "scan":
+		os.Exit(scanCmd())
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -98,6 +101,7 @@ usage:
   capbus enable|disable <n>  switch one capability on or off
   capbus use <all|default|name>  which capabilities get injected at all
   capbus cost [--refresh]    measure what each capability costs per turn
+  capbus scan                read-only diagnosis: what is wrong and what it costs
   capbus version
 
   --shared  point global capabilities at the shared backend instead of
@@ -787,6 +791,42 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n-1] + "…"
+}
+
+// scanCmd prints a read-only diagnosis. It changes nothing, on purpose: the
+// report has to be trusted before anything is allowed to act on it.
+func scanCmd() int {
+	rep := scan.Run()
+
+	fmt.Println("capbus scan — read only, nothing has been changed")
+	fmt.Println()
+	fmt.Printf("%d plugin package(s) in agent profiles, %d resolvable MCP server(s) among them\n",
+		len(rep.Packages), rep.ResolvedNatives())
+	fmt.Printf("%d capability(ies) declared, %d enabled\n", rep.Declared, rep.Enabled)
+	if ags := scan.Agents(); len(ags) > 0 {
+		fmt.Printf("agents: %s\n", strings.Join(ags, ", "))
+	} else {
+		fmt.Println("agents: none detected")
+	}
+
+	if len(rep.Findings) == 0 {
+		fmt.Println("\nnothing to report")
+		return 0
+	}
+	fmt.Printf("\n%d finding(s)\n", len(rep.Findings))
+	for _, f := range rep.Findings {
+		fmt.Printf("\n[%s] %s\n", f.Severity, f.Title)
+		if f.Detail != "" {
+			fmt.Println("       " + f.Detail)
+		}
+		for _, it := range f.Items {
+			fmt.Println("       - " + it)
+		}
+		if f.Fix != "" {
+			fmt.Println("       fix: " + f.Fix)
+		}
+	}
+	return 0
 }
 
 // toggleCmd switches one capability on or off.

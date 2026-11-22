@@ -41,6 +41,9 @@ func Discover() []Finding {
 func DiscoverIn(home string) []Finding {
 	var all []Finding
 	all = append(all, fromDSH(home)...)
+	// Plugins that have never been started have no state file, so read their
+	// bundles too; otherwise import misses most of them.
+	all = append(all, nativeFindings(home)...)
 	all = append(all, fromJSONConfig(filepath.Join(home, ".claude.json"), "claude-code")...)
 	all = append(all, fromJSONConfig(filepath.Join(home, ".cursor", "mcp.json"), "cursor")...)
 	all = append(all, fromCodex(filepath.Join(home, ".codex", "config.toml"))...)
