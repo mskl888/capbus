@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,9 +15,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/capbus/capbus/internal/activity"
 	"github.com/capbus/capbus/internal/enabled"
 	"github.com/capbus/capbus/internal/importscan"
 	"github.com/capbus/capbus/internal/manifest"
@@ -24,10 +27,12 @@ import (
 	"github.com/capbus/capbus/internal/mcpserver"
 	"github.com/capbus/capbus/internal/probe"
 	"github.com/capbus/capbus/internal/proto"
+	"github.com/capbus/capbus/internal/proxy"
 	"github.com/capbus/capbus/internal/registry"
 	"github.com/capbus/capbus/internal/scan"
 	"github.com/capbus/capbus/internal/secret"
 	"github.com/capbus/capbus/internal/supervise"
+	"github.com/capbus/capbus/internal/trim"
 	cost "github.com/capbus/capbus/internal/usage"
 	yaml "gopkg.in/yaml.v3"
 )
@@ -74,6 +79,8 @@ func main() {
 		os.Exit(costCmd(os.Args[2:]))
 	case "scan":
 		os.Exit(scanCmd())
+	case "activity":
+		os.Exit(activityCmd(os.Args[2:]))
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -102,6 +109,7 @@ usage:
   capbus use <all|default|name>  which capabilities get injected at all
   capbus cost [--refresh]    measure what each capability costs per turn
   capbus scan                read-only diagnosis: what is wrong and what it costs
+  capbus activity [--tail N] what capabilities were actually called
   capbus version
 
   --shared  point global capabilities at the shared backend instead of
@@ -487,8 +495,53 @@ func execCmd(args []string) int {
 
 	cmd := exec.Command(bin, binArgs...)
 	cmd.Env = env
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
+	cmd.Stderr = os.Stderr
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "capbus exec: %v\n", err)
+		return 1
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "capbus exec: %v\n", err)
+		return 1
+	}
+	if err := cmd.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "capbus exec: %v\n", err)
+		return 1
+	}
+
+	// Requests go out untouched; we only observe them.
+	go func() {
+		_ = proxy.Pump(stdin, os.Stdin, func(m *proto.Message) bool {
+			if m.Method == "tools/call" {
+				var p struct {
+					Name string `json:"name"`
+				}
+				_ = json.Unmarshal(m.Params, &p)
+				_ = activity.Append(activity.Event{
+					Capability: name, Kind: "call", Tool: p.Name, Bytes: len(m.Params),
+				})
+			}
+			return false
+		})
+		_ = stdin.Close()
+	}()
+
+	// Responses are where the tokens go, so they are trimmed on the way back.
+	_ = proxy.Pump(os.Stdout, stdout, func(m *proto.Message) bool {
+		if !m.IsResponse() {
+			return false
+		}
+		saved := trim.Result(m, trim.DefaultLimit)
+		_ = activity.Append(activity.Event{
+			Capability: name, Kind: "result", Bytes: len(m.Result), Trimmed: saved,
+		})
+		return saved > 0
+	})
+
+	if err := cmd.Wait(); err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
 			return ee.ExitCode()
@@ -791,6 +844,79 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n-1] + "..."
+}
+
+// activityCmd shows what agents actually called. Only metadata was recorded:
+// never arguments, never results.
+func activityCmd(args []string) int {
+	n := 50
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--tail":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "capbus activity: --tail needs a number")
+				return 2
+			}
+			i++
+			v, err := strconv.Atoi(args[i])
+			if err != nil || v <= 0 {
+				fmt.Fprintf(os.Stderr, "capbus activity: bad tail %q\n", args[i])
+				return 2
+			}
+			n = v
+		default:
+			fmt.Fprintf(os.Stderr, "capbus activity: unknown flag %q\n", args[i])
+			return 2
+		}
+	}
+
+	events, err := activity.Tail(n)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "capbus activity: %v\n", err)
+		return 1
+	}
+	if len(events) == 0 {
+		fmt.Println("nothing recorded yet")
+		fmt.Println("calls are recorded when an agent runs a capability through capbus exec, or through the shared backend")
+		return 0
+	}
+
+	sum := activity.Summarize(events)
+	names := make([]string, 0, len(sum))
+	for n := range sum {
+		names = append(names, n)
+	}
+	sort.Slice(names, func(i, j int) bool { return sum[names[i]].Calls > sum[names[j]].Calls })
+
+	fmt.Printf("%-20s %6s  %-16s  %-22s %10s %9s\n", "CAPABILITY", "CALLS", "LAST CALL", "TOP TOOL", "BYTES OUT", "TRIMMED")
+	for _, n := range names {
+		s := sum[n]
+		top := "-"
+		best := 0
+		for tool, c := range s.Tools {
+			if c > best {
+				best, top = c, tool
+			}
+		}
+		last := "-"
+		if !s.LastCall.IsZero() {
+			last = s.LastCall.Format("2006-01-02 15:04")
+		}
+		fmt.Printf("%-20s %6d  %-16s  %-22s %10s %9s\n",
+			n, s.Calls, last, truncate(top, 22), humanBytes(s.BytesOut), humanBytes(s.Trimmed))
+	}
+	fmt.Printf("\n%d event(s) from the last %d of %s\n", len(events), n, activity.Path())
+	return 0
+}
+
+func humanBytes(n int) string {
+	switch {
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1f MB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%.1f KB", float64(n)/(1<<10))
+	}
+	return fmt.Sprintf("%d B", n)
 }
 
 // scanCmd prints a read-only diagnosis. It changes nothing, on purpose: the

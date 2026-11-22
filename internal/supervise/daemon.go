@@ -24,8 +24,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/capbus/capbus/internal/activity"
 	"github.com/capbus/capbus/internal/manifest"
 	"github.com/capbus/capbus/internal/proto"
+	"github.com/capbus/capbus/internal/trim"
 )
 
 const (
@@ -276,6 +278,16 @@ func (c *client) serve() {
 		case m.Method == "notifications/initialized":
 			// Nothing to forward: the handshake happened once, at startup.
 		case m.IsRequest():
+			// Observe before forwarding; the request itself is never altered.
+			if m.Method == "tools/call" {
+				var p struct {
+					Name string `json:"name"`
+				}
+				_ = json.Unmarshal(m.Params, &p)
+				_ = activity.Append(activity.Event{
+					Capability: c.b.spec.Name, Kind: "call", Tool: p.Name, Bytes: len(m.Params),
+				})
+			}
 			c.b.forward(c, m)
 		case m.IsNotification():
 			if err := c.b.writeBackend(m); err != nil {
@@ -543,6 +555,12 @@ func (b *backend) pump() {
 			if p == nil {
 				continue // response to the startup handshake, or already answered
 			}
+			// Trim before delivery: this is the only place a oversized result
+			// can be stopped from entering a model's context.
+			saved := trim.Result(m, trim.DefaultLimit)
+			_ = activity.Append(activity.Event{
+				Capability: b.spec.Name, Kind: "result", Bytes: len(m.Result), Trimmed: saved,
+			})
 			m.ID = p.origID
 			_ = p.c.wr.Write(m)
 		case m.IsNotification():
