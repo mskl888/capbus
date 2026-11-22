@@ -430,6 +430,7 @@ func (b *backend) start() error {
 		return err
 	}
 	cmd.Env = env
+	cmd.Dir = b.spec.WorkDir()
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err

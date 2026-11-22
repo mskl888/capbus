@@ -27,6 +27,16 @@ func (m *Manifest) Command() (string, []string, error) {
 	return "", nil, fmt.Errorf("%s: no source", m.Name)
 }
 
+// WorkDir returns the directory the capability should start in, expanded.
+// An empty value means "inherit", which is what most servers want.
+func (m *Manifest) WorkDir() string {
+	d := strings.TrimSpace(m.Source.Cwd)
+	if d == "" {
+		return ""
+	}
+	return os.ExpandEnv(d)
+}
+
 // EnvList returns the extra environment a capability process needs, in
 // os/exec form ("KEY=value").
 func (m *Manifest) EnvList() []string {

@@ -38,6 +38,10 @@ type Source struct {
 	Command string            `yaml:"command,omitempty"`
 	Args    []string          `yaml:"args,omitempty"`
 	Env     map[string]string `yaml:"env,omitempty"`
+	// Cwd is the working directory the capability expects. Servers that load
+	// assets by relative path fail without it, and the failure looks like a
+	// missing file rather than a missing setting.
+	Cwd string `yaml:"cwd,omitempty"`
 }
 
 type Permissions struct {

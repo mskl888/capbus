@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/capbus/capbus/internal/activity"
+	"github.com/capbus/capbus/internal/adopt"
 	"github.com/capbus/capbus/internal/enabled"
 	"github.com/capbus/capbus/internal/i18n"
 	"github.com/capbus/capbus/internal/importscan"
@@ -82,6 +83,10 @@ func main() {
 		os.Exit(scanCmd())
 	case "activity":
 		os.Exit(activityCmd(os.Args[2:]))
+	case "adopt":
+		os.Exit(adoptCmd(os.Args[2:]))
+	case "undo":
+		os.Exit(undoCmd())
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -111,6 +116,8 @@ usage:
   capbus cost [--refresh]    measure what each capability costs per turn
   capbus scan                read-only diagnosis: what is wrong and what it costs
   capbus activity [--tail N] what capabilities were actually called
+  capbus adopt [--apply] <name>  take over an MCP server an agent installed
+  capbus undo                reverse the last adopt
   capbus version
 
   --shared  point global capabilities at the shared backend instead of
@@ -496,6 +503,7 @@ func execCmd(args []string) int {
 
 	cmd := exec.Command(bin, binArgs...)
 	cmd.Env = env
+	cmd.Dir = spec.WorkDir()
 	cmd.Stderr = os.Stderr
 
 	stdin, err := cmd.StdinPipe()
@@ -1188,5 +1196,84 @@ func costCmd(args []string) int {
 	if total > 20000 {
 		fmt.Println(i18n.T("that is a large slice of the context window: `capbus use <name>` narrows it"))
 	}
+	return 0
+}
+
+// adoptCmd takes over an MCP server that an agent installed for itself.
+//
+// Without --apply it only prints the plan and the exact YAML it would append,
+// because the change lands in someone else's profile and the user has to
+// restart the agent to see the result.
+func adoptCmd(args []string) int {
+	apply := false
+	server := ""
+	for _, a := range args {
+		switch {
+		case a == "--apply":
+			apply = true
+		case strings.HasPrefix(a, "-"):
+			fmt.Fprintf(os.Stderr, "capbus adopt: unknown flag %q\n", a)
+			return 2
+		default:
+			if server != "" {
+				fmt.Fprintln(os.Stderr, "capbus adopt: one capability at a time")
+				return 2
+			}
+			server = a
+		}
+	}
+	if server == "" {
+		fmt.Fprintln(os.Stderr, "usage: capbus adopt [--apply] <serverName>")
+		return 2
+	}
+
+	p, err := adopt.Make(server)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "capbus adopt: %v\n", err)
+		return 1
+	}
+
+	fmt.Printf("adopt plan for %s\n\n", server)
+	fmt.Printf("  plugin       %s\n", p.Plugin)
+	fmt.Printf("  row          %s\n", p.RowID)
+	fmt.Printf("  command      %s %s\n", p.Command, strings.Join(p.Args, " "))
+	if p.Cwd != "" {
+		fmt.Printf("  workdir      %s\n", p.Cwd)
+	}
+	fmt.Printf("  profile      %s\n", p.ProfilePatch)
+	fmt.Printf("  plugin file  %s\n\n", p.PackagePatch)
+	fmt.Println("this entry will be appended to the profile patch:")
+	fmt.Println(p.Block())
+
+	if !apply {
+		fmt.Println("dry run: nothing was written. add --apply to perform the handover.")
+		return 0
+	}
+
+	steps, err := adopt.Apply(p)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "capbus adopt: %v\n", err)
+		return 1
+	}
+	fmt.Println("done:")
+	for _, s := range steps {
+		fmt.Println("  " + s)
+	}
+	fmt.Println("\nrestart the agent for this to take effect, then check that its tools still appear.")
+	fmt.Println("to reverse everything: capbus undo")
+	return 0
+}
+
+// undoCmd restores the files the last adopt changed.
+func undoCmd() int {
+	steps, err := adopt.Undo()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "capbus undo: %v\n", err)
+		return 1
+	}
+	for _, s := range steps {
+		fmt.Println(s)
+	}
+	fmt.Println("\nrestart the agent for the restored files to take effect.")
 	return 0
 }

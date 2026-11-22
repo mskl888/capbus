@@ -38,6 +38,7 @@ func Measure(m manifest.Manifest, timeout time.Duration) (Result, error) {
 
 	cmd := exec.Command(bin, args...)
 	cmd.Env = env
+	cmd.Dir = m.WorkDir()
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return Result{}, err

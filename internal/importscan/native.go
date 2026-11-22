@@ -27,6 +27,12 @@ type Native struct {
 	// Broken records that the package declared an MCP client but capbus could
 	// not read it at all.
 	Broken bool
+	// Cwd is the working directory the server expects, when the patch sets one.
+	Cwd string
+	// RowID is the insert row's own id, which is how the row is disabled later.
+	RowID string
+	// PatchPath is the file the row lives in.
+	PatchPath string
 }
 
 // PluginPackages lists every plugin package installed in an agent profile,
@@ -77,12 +83,14 @@ func Natives(home string) []Native {
 
 		var doc []struct {
 			Insert []struct {
+				ID       string `yaml:"id"`
 				Name     string `yaml:"name"`
 				Disabled bool   `yaml:"disabled"`
 				Config   struct {
 					ServerName string   `yaml:"serverName"`
 					Command    string   `yaml:"command"`
 					Args       []string `yaml:"args"`
+					Cwd        string   `yaml:"cwd"`
 				} `yaml:"config"`
 			} `yaml:"insert"`
 		}
@@ -105,11 +113,14 @@ func Natives(home string) []Native {
 				}
 				cmd := ins.Config.Command
 				out = append(out, Native{
-					Plugin:   plugin,
-					Server:   ins.Config.ServerName,
-					Command:  cmd,
-					Args:     ins.Config.Args,
-					Resolved: cmd != "" && !computed && !looksComputed(cmd),
+					Plugin:    plugin,
+					Server:    ins.Config.ServerName,
+					Command:   cmd,
+					Args:      ins.Config.Args,
+					Cwd:       ins.Config.Cwd,
+					RowID:     ins.ID,
+					PatchPath: p,
+					Resolved:  cmd != "" && !computed && !looksComputed(cmd),
 				})
 			}
 		}
