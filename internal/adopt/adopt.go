@@ -112,9 +112,12 @@ func Make(server string) (Plan, error) {
 		return Plan{}, fmt.Errorf(
 			"%q is launched by a computed command, so capbus cannot copy it; write a manifest by hand instead", server)
 	}
-	profile, err := ProfileName()
-	if err != nil {
-		return Plan{}, err
+	// The native patch itself identifies the profile that owns this plugin.
+	// Choosing the first profile by directory name can remove a same-named
+	// plugin from a different profile.
+	profile := filepath.Base(filepath.Dir(filepath.Dir(filepath.Dir(found.PatchPath))))
+	if profile == "" || profile == "." || profile == string(filepath.Separator) {
+		return Plan{}, fmt.Errorf("cannot derive a profile name from %s", found.PatchPath)
 	}
 	return Plan{
 		Server:  server,

@@ -65,6 +65,23 @@ func TestMakeResolvesNativeAndProfile(t *testing.T) {
 	}
 }
 
+func TestMakeUsesProfileContainingNative(t *testing.T) {
+	home, _ := withNative(t)
+	writeFile(t, filepath.Join(home, ".dsh", "profiles", "aaa", "cordis.patch.yml"), "# another profile\n")
+
+	p, err := Make("craft")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Profile != "desktop" {
+		t.Fatalf("adopt selected profile %q, want the profile containing the native plugin: desktop", p.Profile)
+	}
+	add, remove := p.Commands()
+	if strings.Contains(add, "--profile aaa") || strings.Contains(remove, "--profile aaa") {
+		t.Fatalf("commands target a different profile: %q / %q", add, remove)
+	}
+}
+
 // The core regression: commands go to DSH's own plugin manager. The original
 // plugin is removed only for adopt, never for inject, and the bundle add comes
 // first so the capability never disappears in between.
