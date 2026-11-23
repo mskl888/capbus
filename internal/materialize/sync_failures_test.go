@@ -226,6 +226,41 @@ func TestLedgerWriteFailureIsReported(t *testing.T) {
 	}
 }
 
+func TestLedgerWriteFailureRollsBackAgentConfig(t *testing.T) {
+	home := withHome(t)
+	p := filepath.Join(home, ".claude.json")
+	original := `{"mcpServers":{"mine":{"command":"/user/mine"}}}`
+	if err := os.WriteFile(p, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	blocked := filepath.Join(home, "blocked")
+	if err := os.WriteFile(blocked, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CAPBUS_HOME", filepath.Join(blocked, "capbus"))
+
+	out := Sync(capSet(), Options{})
+	if !out.Failed() {
+		t.Fatal("test premise: the ledger write must fail")
+	}
+	if len(out.Wrote) != 0 {
+		t.Fatalf("a failed transaction must not report committed files: %v", out.Wrote)
+	}
+	if b, _ := os.ReadFile(p); string(b) != original {
+		t.Fatalf("agent config was left changed after ledger failure:\n%s", b)
+	}
+
+	// Once the ledger destination is fixed, a retry must succeed rather than
+	// collide with the unrecorded entry left by the first attempt.
+	if err := os.Remove(blocked); err != nil {
+		t.Fatal(err)
+	}
+	retry := Sync(capSet(), Options{})
+	if retry.Failed() {
+		t.Fatalf("retry after ledger recovery failed: %v", retry.Errs)
+	}
+}
+
 // Registry errors are the caller's to catch: Sync must not be reached with a
 // manifest set it cannot trust. This documents the contract the CLI honours.
 func TestSyncIsNotCalledWithInvalidManifests(t *testing.T) {

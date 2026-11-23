@@ -404,9 +404,15 @@ func Sync(ms []manifest.Manifest, opts Options) Outcome {
 	// actually claimed. A conflicted name was never written, so recording it
 	// would give a later run a false reason to delete the user's entry.
 	if err := saveLedger(claimed); err != nil {
+		// Config entries without their ownership records would make the next sync
+		// reject capbus's own just-written entries as user-owned collisions. Roll
+		// the config transaction back so fixing the ledger destination is enough
+		// for a clean retry.
+		rollback(writes)
+		out.Wrote = nil
 		out.Errs = append(out.Errs, fmt.Errorf(
-			"the agent configs were written, but the ownership ledger could not be saved: %w "+
-				"(run `capbus sync` again once that is fixed)", err))
+			"the ownership ledger could not be saved, so the agent config changes were rolled back: %w "+
+				"(fix the ledger destination and run `capbus sync` again)", err))
 	}
 
 	sort.Strings(out.Wrote)
