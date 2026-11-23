@@ -1,5 +1,9 @@
 # capbus
 
+[![CI](https://github.com/mskl888/capbus/actions/workflows/ci.yml/badge.svg)](https://github.com/mskl888/capbus/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/mskl888/capbus?include_prereleases&sort=semver)](https://github.com/mskl888/capbus/releases)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 **声明一次，每个 Agent 按自己的格式装上。**
 
 同一台电脑上装了 Claude Code、Codex、DSH、Cursor，每个都要单独配一遍 MCP server、单独填一遍 API key、单独装一份相同的工具。capbus 把「声明」这件事变成一次。
@@ -84,7 +88,7 @@ Agent B ──stdio──► capbus bridge github ──┘         （唯一的
 - 能力级通知（如 `notifications/progress`）广播给所有已连接的 Agent。
 - 后端崩了自动重启；Agent 手上正在等的请求会收到明确错误，而不是永远挂着。
 
-后端与服务之间的连接只绑 `127.0.0.1`，并且要握手一个每次启动随机生成的 token——同机其他进程无法冒充 Agent。
+后端与服务之间的连接只绑 `127.0.0.1`，并使用每次启动随机生成的 token，防止跨用户访问和误连接；它不防同一用户身份下的恶意进程。
 
 ---
 
@@ -197,6 +201,10 @@ command = '/usr/local/bin/capbus'
 
 ## 安装
 
+预编译版本见 [Releases](https://github.com/mskl888/capbus/releases)。下载对应操作系统的压缩包，并用同页 `SHA256SUMS` 校验文件。
+
+从源码构建：
+
 ```bash
 git clone https://github.com/mskl888/capbus.git
 cd capbus
@@ -215,10 +223,15 @@ kind: mcp
 scope: global          # 无状态 → 全机共享一个进程
 source:
   npm: "@modelcontextprotocol/server-github"
-  env:
-    GITHUB_TOKEN: "ghp_..."   # 目前写在清单里；Secret Broker 之后会接管
 permissions:
   egress: [api.github.com]
+  secrets: [GITHUB_TOKEN]      # 只声明名称，凭据不写进 manifest
+```
+
+然后由用户本人存入凭据：
+
+```bash
+echo "$GITHUB_TOKEN" | capbus secret set GITHUB_TOKEN
 ```
 
 `examples/capabilities/` 里还有 `filesystem`、`playwright`（演示有状态能力必须 `workspace`），以及 `examples/fake-mcp/`——一个 50 行的假 MCP server，用来在没有 npm/docker 的情况下跑通 supervisor。
@@ -266,6 +279,13 @@ Start `capbus supervise --experimental` first. Writing per-agent copies would le
 这就是这个字段存在的全部理由：**让"记忆分叉"变成一个必须解决的错误，而不是一个几个月后才发现的现象。**
 
 和"多个进程共用一个 JSONL 文件"相比，这里只有一个进程，不存在"把它加载进内存、看不到别人的更新、要重启才同步"的问题。
+## 反馈与贡献
+
+- Bug 和功能建议：[Issues](https://github.com/mskl888/capbus/issues)
+- 使用问答与经验交流：[Discussions](https://github.com/mskl888/capbus/discussions)
+- 安全漏洞：[私密报告](SECURITY.md)，不要公开披露未修复的问题
+- 开发流程与验收要求：[CONTRIBUTING.md](CONTRIBUTING.md)
+
 ## 许可证
 
 **Apache-2.0**。见 [LICENSE](LICENSE)。

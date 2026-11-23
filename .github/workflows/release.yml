@@ -1,0 +1,85 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+      - name: Verify source
+        run: |
+          test -z "$(gofmt -l .)"
+          go vet ./...
+          go test ./... -count=1
+      - name: Build packages and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${VERSION#v}"
+          case "$version" in
+            ""|*[!0-9A-Za-z.+-]*)
+              echo "invalid release tag: $VERSION" >&2
+              exit 1
+              ;;
+          esac
+          rm -rf dist .release-work
+          mkdir -p dist .release-work
+          while read -r goos goarch; do
+            work=".release-work/capbus_${version}_${goos}_${goarch}"
+            mkdir -p "$work"
+            ext=""
+            archive="capbus_${version}_${goos}_${goarch}.tar.gz"
+            if [ "$goos" = windows ]; then
+              ext=".exe"
+              archive="capbus_${version}_${goos}_${goarch}.zip"
+            fi
+            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
+              go build -trimpath -ldflags="-s -w -X main.version=$version" \
+              -o "$work/capbus$ext" ./cmd/capbus
+            cp README.md LICENSE "$work/"
+            if [ "$goos" = linux ] && [ "$goarch" = amd64 ]; then
+              test "$("$work/capbus" version)" = "capbus $version (linux/amd64)"
+            fi
+            if [ "$goos" = windows ]; then
+              (cd "$work" && zip -q -r "../../dist/$archive" .)
+            else
+              tar -C "$work" -czf "dist/$archive" .
+            fi
+          done <<'TARGETS'
+          linux amd64
+          linux arm64
+          darwin amd64
+          darwin arm64
+          windows amd64
+          windows arm64
+          TARGETS
+          (cd dist && sha256sum *.tar.gz *.zip > SHA256SUMS)
+          ls -lh dist
+      - name: Create GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          prerelease=""
+          case "$VERSION" in
+            *alpha*|*beta*|*rc*) prerelease="--prerelease" ;;
+          esac
+          gh release create "$VERSION" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$VERSION" \
+            --generate-notes \
+            $prerelease

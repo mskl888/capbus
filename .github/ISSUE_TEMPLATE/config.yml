@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 使用问答与经验交流
+    url: https://github.com/mskl888/capbus/discussions
+    about: 非缺陷问题请放到 Discussions，不要附真实凭据或私密配置。
+  - name: 安全漏洞私密报告
+    url: https://github.com/mskl888/capbus/security/advisories/new
+    about: 未修复的安全问题不要公开发布。

@@ -1,0 +1,57 @@
+name: Bug 报告
+description: 报告可复现的错误行为
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请删除日志中的 Token、API Key、主密钥和私人路径。安全漏洞请改用私密漏洞报告。
+  - type: input
+    id: version
+    attributes:
+      label: capbus 版本
+      description: 运行 `capbus version` 得到的输出
+      placeholder: 0.4.0-alpha.1
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: 操作系统
+      options:
+        - Windows
+        - Linux
+        - macOS
+        - 其他
+    validations:
+      required: true
+  - type: input
+    id: agent
+    attributes:
+      label: 相关 Agent 与版本
+      placeholder: Claude Code / Codex / Cursor / DSH
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+      description: 从初始状态开始列出最小步骤和实际命令
+      placeholder: |
+        1. 创建……
+        2. 运行……
+        3. 观察……
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为与脱敏日志
+      render: text
+    validations:
+      required: true

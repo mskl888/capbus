@@ -41,7 +41,8 @@ import (
 	yaml "gopkg.in/yaml.v3"
 )
 
-const version = "0.4.0-dev"
+// version is overridden by release builds with -ldflags "-X main.version=...".
+var version = "0.4.0-dev"
 
 func main() {
 	if len(os.Args) < 2 {

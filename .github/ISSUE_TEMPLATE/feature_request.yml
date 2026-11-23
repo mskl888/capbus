@@ -1,0 +1,32 @@
+name: 功能建议
+description: 说明一个明确的使用场景和改进方向
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 要解决的问题
+      description: 描述谁在什么场景遇到什么困难，不只描述想加的功能
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议的行为
+      description: 说明命令、配置或输出应该怎样变化
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 已考虑的替代方案
+  - type: checkboxes
+    id: boundary
+    attributes:
+      label: 边界确认
+      options:
+        - label: 该建议不要求 capbus 变成 MCP 商店、通用网关、Agent 框架或新的记忆数据库
+          required: true
+        - label: 我会附上验收标准，并说明对现有配置的影响
+          required: true
