@@ -9,6 +9,8 @@ package trim
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/capbus/capbus/internal/proto"
 )
@@ -49,10 +51,20 @@ func Result(m *proto.Message, limit int) int {
 		if !ok || len(text) <= perItem {
 			continue
 		}
-		cut := len(text) - perItem
+		// Cut on a rune boundary: slicing bytes would split a multi-byte
+		// character and leave invalid UTF-8 in the JSON string.
+		at := perItem
+		for at > 0 && !utf8.RuneStart(text[at]) {
+			at--
+		}
+		cut := len(text) - at
 		dropped += cut
-		m["text"] = text[:perItem] + fmt.Sprintf(
+		note := fmt.Sprintf(
 			"\n[capbus trimmed %d of %d bytes from this result; ask for less, or a narrower range]", cut, len(text))
+		if trimmedJSON(text[:at]) {
+			note += "\n[this text was JSON and is now incomplete]"
+		}
+		m["text"] = text[:at] + note
 	}
 
 	if dropped == 0 {
@@ -71,4 +83,12 @@ func Result(m *proto.Message, limit int) int {
 	}
 	m.Result = b
 	return original - len(b)
+}
+
+// trimmedJSON reports whether what is left of the text is the beginning of a
+// JSON document, which the trim has just made unparseable. Saying so is better
+// than handing the model a broken object it will try to read anyway.
+func trimmedJSON(s string) bool {
+	s = strings.TrimLeft(s, " \t\r\n")
+	return strings.HasPrefix(s, "{") || strings.HasPrefix(s, "[")
 }

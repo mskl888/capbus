@@ -52,12 +52,7 @@ func (m *Manifest) EnvList() []string {
 // declares. Secrets come from the encrypted store, so no agent config ever
 // holds a credential.
 func (m *Manifest) ResolveEnv() ([]string, error) {
-	vars := map[string]string{}
-	for _, kv := range os.Environ() {
-		if i := strings.IndexByte(kv, '='); i > 0 {
-			vars[kv[:i]] = kv[i+1:]
-		}
-	}
+	vars := inheritedEnv()
 	// Manifest env must override the inherited value. Appending would not do
 	// it: libc's getenv returns the first match, so the inherited one wins.
 	for k, v := range m.Source.Env {
@@ -97,4 +92,42 @@ func (m *Manifest) Executable() string {
 		return "-"
 	}
 	return strings.Join(append([]string{name}, args...), " ")
+}
+
+// safeEnvNames is everything a capability process inherits: enough for an
+// ordinary program to start and find its runtime, and nothing that looks like a
+// credential. Anything else - an API key exported for another tool, a cloud
+// session token - must be declared in the manifest's source.env or under
+// permissions.secrets, where the user can see it.
+//
+// The review that prompted this (2026-11-23) put it plainly: inheriting
+// os.Environ() hands every variable in the user's shell to every capability.
+var safeEnvNames = map[string]bool{
+	// POSIX
+	"PATH": true, "HOME": true, "USER": true, "LOGNAME": true, "SHELL": true,
+	"PWD": true, "LANG": true, "LC_ALL": true, "LC_CTYPE": true, "TERM": true,
+	"TZ": true, "TMPDIR": true,
+	// Windows: without SystemRoot many programs cannot resolve DNS or load
+	// system DLLs, so these are not optional.
+	"SYSTEMROOT": true, "SYSTEMDRIVE": true, "WINDIR": true, "COMSPEC": true,
+	"PATHEXT": true, "NUMBER_OF_PROCESSORS": true, "PROCESSOR_ARCHITECTURE": true,
+	"OS": true, "USERPROFILE": true, "HOMEDRIVE": true, "HOMEPATH": true,
+	"APPDATA": true, "LOCALAPPDATA": true, "PROGRAMDATA": true, "PROGRAMFILES": true,
+	"PROGRAMFILES(X86)": true, "COMMONPROGRAMFILES": true, "TEMP": true, "TMP": true,
+}
+
+// inheritedEnv copies the safe subset of the current environment.
+func inheritedEnv() map[string]string {
+	vars := map[string]string{}
+	for _, kv := range os.Environ() {
+		i := strings.IndexByte(kv, '=')
+		if i <= 0 {
+			continue
+		}
+		k := kv[:i]
+		if safeEnvNames[strings.ToUpper(k)] {
+			vars[k] = kv[i+1:]
+		}
+	}
+	return vars
 }

@@ -106,8 +106,13 @@ func (m *Manifest) Validate() error {
 	if m.Name == "" {
 		return fmt.Errorf("name is required")
 	}
-	if m.Name != strings.ToLower(m.Name) || strings.ContainsAny(m.Name, " \t") {
-		return fmt.Errorf("name must be lower-case with no spaces, got %q", m.Name)
+	// The name becomes a file name (<name>.yaml under the registry) and a key
+	// in every agent's config, so its character set is a security boundary and
+	// not a style choice: a separator would let a manifest write outside the
+	// directory it belongs to.
+	if !validName(m.Name) {
+		return fmt.Errorf("name must be 1-63 characters of lower-case letters, digits, dot, "+
+			"dash or underscore, starting with a letter or digit; got %q", m.Name)
 	}
 	switch m.Kind {
 	case KindMCP, KindSkill, KindCLI:
@@ -147,4 +152,23 @@ func (m *Manifest) Validate() error {
 // Sort orders manifests by name so output and generated configs are stable.
 func Sort(ms []Manifest) {
 	sort.Slice(ms, func(i, j int) bool { return ms[i].Name < ms[j].Name })
+}
+
+// validName is the character set a capability name may use. It is deliberately
+// narrow: the name is a file name and a config key, so anything that could be
+// read as a path separator is out. Starting with a letter or digit also makes
+// "." and ".." impossible.
+func validName(s string) bool {
+	if len(s) == 0 || len(s) > 63 {
+		return false
+	}
+	for i, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+		case (r == '.' || r == '-' || r == '_') && i > 0:
+		default:
+			return false
+		}
+	}
+	return true
 }
