@@ -91,6 +91,8 @@ func main() {
 		os.Exit(adoptCmd(os.Args[2:]))
 	case "undo":
 		os.Exit(undoCmd())
+	case "api":
+		os.Exit(apiCmd(os.Args[2:]))
 	case "ui":
 		os.Exit(uiCmd(os.Args[2:]))
 	case "inject":
@@ -128,6 +130,7 @@ usage:
   capbus adopt [--apply] <name>  take over an MCP server an agent installed
   capbus undo                reverse the last adopt
   capbus ui [--no-open]      open the local dashboard
+  capbus api state|toggle    machine interface for editor and shell integrations
   capbus inject [--apply] <name>  put a capbus capability into the agent profile
   capbus version
 
@@ -1575,4 +1578,68 @@ func printChanges(changes []materialize.Change, verbose bool) {
 	if printed > 0 {
 		fmt.Println()
 	}
+}
+
+// apiCmd is the local interface the DeepSeek Harness plugin calls: the same
+// snapshot the web panel shows, on stdout, with no listener, no token and no
+// network. The Host half runs it as a subprocess, so nothing has to be
+// authenticated between the two.
+func apiCmd(args []string) int {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	write := func() int {
+		snap := panel.Build()
+		snap.Token = ""
+		if err := enc.Encode(snap); err != nil {
+			fmt.Fprintf(os.Stderr, "capbus api: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+
+	sub := "state"
+	if len(args) > 0 {
+		sub = args[0]
+	}
+	switch sub {
+	case "state":
+		return write()
+	case "toggle":
+		// capbus api toggle <name> on|off
+		if len(args) != 3 {
+			fmt.Fprintln(os.Stderr, "usage: capbus api toggle <name> on|off")
+			return 2
+		}
+		on := args[2] == "on"
+		if args[2] != "on" && args[2] != "off" {
+			fmt.Fprintln(os.Stderr, "capbus api toggle: the third argument must be on or off")
+			return 2
+		}
+		ms, _ := registry.Load()
+		found := false
+		for _, m := range ms {
+			if m.Name == args[1] {
+				found = true
+				break
+			}
+		}
+		if !found {
+			fmt.Fprintf(os.Stderr, "capbus api toggle: no such capability %q\n", args[1])
+			return 1
+		}
+		st, err := enabled.Load()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "capbus api toggle: %v\n", err)
+			return 1
+		}
+		st.Set(args[1], on)
+		if err := st.Save(); err != nil {
+			fmt.Fprintf(os.Stderr, "capbus api toggle: %v\n", err)
+			return 1
+		}
+		_ = audit.Append("api-toggle", args[1]+" "+args[2])
+		return write()
+	}
+	fmt.Fprintf(os.Stderr, "capbus api: unknown subcommand %q (state | toggle)\n", sub)
+	return 2
 }
