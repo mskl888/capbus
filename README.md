@@ -1,12 +1,12 @@
 # capbus
 
-**装一次，你机器上所有 Agent 都会用。**
+**声明一次，每个 Agent 按自己的格式装上。**
 
-同一台电脑上装了 Claude Code、Codex、DSH、Cursor，每个都要单独配一遍 MCP server、单独填一遍 API key、单独装一份相同的工具。capbus 把这件事变成一次。
+同一台电脑上装了 Claude Code、Codex、DSH、Cursor，每个都要单独配一遍 MCP server、单独填一遍 API key、单独装一份相同的工具。capbus 把「声明」这件事变成一次。
 
 ```bash
-capbus supervise            # 一个后端，机器上只跑一份
-capbus sync --shared        # 所有 Agent 指向它
+capbus sync                       # 把清单翻译成每个 Agent 自己的配置
+capbus supervise --experimental   # 可选：工具类能力共用一个后端（实验性）
 ```
 
 **第一次用 → [5 分钟上手](docs/QUICKSTART.md)** ｜ **想让 AI 自己管 → [给 AI 用](docs/AI.md)**
@@ -24,8 +24,17 @@ capbus sync --shared        # 所有 Agent 指向它
 capbus 做三件事，只做这三件：
 
 1. **一份清单**——能力（MCP server / skill / CLI）只声明一次，存在一个 git 仓库里。
-2. **一个进程**——无状态能力由 capbus 托管，多个 Agent 连同一个实例，不重复启动。
-3. **N 份配置**——按每个 Agent 的格式自动生成并保持同步，你不手写任何配置。
+2. **一个进程（实验性）**——工具类能力可以由 capbus 托管，多个 Agent 连同一个实例。代价是：后端只握手一次、收不到服务端反过来问客户端的话、通知发给所有接入者。**只适合 tools-only 能力**；需要自己会话的能力请保持不共享。
+3. **N 份配置**——按每个 Agent 的格式自动生成并保持同步，你不手写任何配置。只动 capbus 自己写过的条目，用户手动加的一个字节都不碰。
+
+**边界，说清楚**（2026-11-23 架构评审后收窄）：
+
+| 不要这样理解 | 实际是这样 |
+|---|---|
+| 共享后端降低每轮 token | 每个 Agent 仍收到完整工具描述；降 token 靠**按需启用 + 结果裁剪** |
+| 所有 Agent 共享插件 | 宿主 API 与加载格式不同；capbus 只共享**声明**，各 Agent 原生安装 |
+| 单二进制零依赖 | **capbus 本体**单二进制；能力本身仍可能需要 npx / docker / 运行时 |
+| 同机进程无法冒充 Agent | 防跨用户和误连接；**不防**同一个用户下的恶意进程 |
 
 ---
 
@@ -108,14 +117,6 @@ capbus exec: github: missing secret(s) GITHUB_TOKEN — set with `capbus secret 
 
 
 
-边界比功能重要。capbus **明确不做**：
-
-- ❌ **不做 MCP 商店 / 目录站。** 已有 12 万个 server 被 Glama、Smithery、PulseMCP 索引完毕（见 [MARKET.md](MARKET.md)）。
-- ❌ **不做通用网关 / 路由 / 多 provider 负载均衡。** 已有 6,884 个项目在做，包括 Kong 和 OmniRoute。
-- ❌ **不做 Agent 框架。** 不实现 loop、不管理对话、不碰提示词。capbus 只管"能力"，不管"人格"。
-- ❌ **不代理模型流量。** 模型接入是你的 Agent 自己的事。
-
-一句话：**别人做"让 Agent 连上工具"，capbus 做"让你不用为每个 Agent 再配一遍"。**
 
 ---
 
@@ -145,7 +146,7 @@ capbus exec: github: missing secret(s) GITHUB_TOKEN — set with `capbus secret 
 |---|---|
 | `capbus doctor` | 检查能力目录、已装 Agent、supervisor 状态 |
 | `capbus list` | 列出能力、作用域、是否持有会话 |
-| `capbus supervise` | 前台运行共享后端；Ctrl-C 停止 |
+| `capbus supervise --experimental` | 前台运行共享后端（实验性，不带该参数会拒绝并列出代价）；Ctrl-C 停止 |
 | `capbus down` | 停止 supervisor 及其子进程 |
 | `capbus sync [--shared] [--dry-run]` | 写进各 Agent 配置；`--shared` 指向共享后端 |
 | `capbus bridge <name>` | stdio 转发壳（由 Agent 调用，你不要手动跑） |
@@ -250,7 +251,7 @@ source:
 然后：
 
 ```bash
-capbus supervise          # 一个后端，一份数据
+capbus supervise --experimental   # 一个后端，一份数据（实验性）
 capbus sync               # 每个 Agent 都拿到 bridge，指向它
 ```
 
@@ -259,7 +260,7 @@ capbus sync               # 每个 Agent 都拿到 bridge，指向它
 ```
 capbus sync: these capabilities must be shared, but no shared backend is running:
   memory
-Start `capbus supervise` first. Writing per-agent copies would let their state diverge silently.
+Start `capbus supervise --experimental` first. Writing per-agent copies would let their state diverge silently.
 ```
 
 这就是这个字段存在的全部理由：**让"记忆分叉"变成一个必须解决的错误，而不是一个几个月后才发现的现象。**

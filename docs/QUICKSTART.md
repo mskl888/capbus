@@ -76,7 +76,7 @@ secrets        none missing
 shared backend not running
 
 next:
-  1. capbus supervise       # one backend shared by every agent; leave it running
+  1. capbus supervise --experimental   # one backend for tools-only capabilities; leave it running
   2. capbus sync            # write capabilities into every agent
   3. declare a capability in C:\Users\me\.capbus\capabilities
 ```
@@ -143,7 +143,7 @@ capbus secret list
 **第一个终端窗口**，跑着别关：
 
 ```bash
-capbus supervise
+capbus supervise --experimental
 ```
 
 **第二个终端窗口**：
@@ -165,7 +165,7 @@ capbus sync --shared
 | `capbus: command not found` | 关掉终端重开一次（PATH 需要刷新） |
 | Agent 里看不到能力 | `capbus doctor` 看它有没有检测到你的 Agent |
 | 提示缺 secret | `capbus secret set 那个名字` |
-| `--shared` 报错 | 先开一个窗口跑 `capbus supervise` |
+| `--shared` 报错 | 先开一个窗口跑 `capbus supervise --experimental`（共享模式是实验性的） |
 | 不确定现在是什么状态 | `capbus init`，它永远告诉你下一步 |
 
 **出问题时先跑这两个，90% 的情况它们会直接告诉你原因：**
