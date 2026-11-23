@@ -17,7 +17,7 @@ func run(t *testing.T, reqs ...string) []proto.Message {
 	t.Helper()
 	in := strings.NewReader(strings.Join(reqs, "\n") + "\n")
 	var out bytes.Buffer
-	srv := New(proto.NewReader(in), proto.NewWriter(&out), "test")
+	srv := New(proto.NewReader(in), proto.NewWriter(&out), "test", true)
 	_ = srv.Serve()
 
 	var msgs []proto.Message

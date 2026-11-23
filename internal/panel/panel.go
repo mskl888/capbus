@@ -9,6 +9,7 @@ package panel
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
@@ -18,7 +19,6 @@ import (
 	"os/exec"
 	"runtime"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/capbus/capbus/internal/activity"
@@ -176,8 +176,33 @@ func New(port int) (*Server, error) {
 	return &Server{ln: ln, token: hex.EncodeToString(b)}, nil
 }
 
-// URL is where the panel is served.
-func (s *Server) URL() string { return "http://" + s.ln.Addr().String() + "/" }
+// URL is the address to open: it carries the token, which the first request
+// trades for a cookie and then leaves the address bar.
+func (s *Server) URL() string { return "http://" + s.ln.Addr().String() + "/?token=" + s.token }
+
+// sessionCookie is the name the token is kept under after the first visit.
+const sessionCookie = "capbus_session"
+
+// authed reports whether this request carries the token, as a header for
+// scripts or as the cookie a browser got from the tokenised URL.
+//
+// The token is never written into the page any more: a page that embeds it
+// hands the write key to anyone who can load the page, which is exactly what
+// the 2026-11-23 review called out.
+func (s *Server) authed(r *http.Request) bool {
+	want := []byte(s.token)
+	if c, err := r.Cookie(sessionCookie); err == nil {
+		if subtle.ConstantTimeCompare([]byte(c.Value), want) == 1 {
+			return true
+		}
+	}
+	if h := r.Header.Get("X-Capbus-Token"); h != "" {
+		if subtle.ConstantTimeCompare([]byte(h), want) == 1 {
+			return true
+		}
+	}
+	return false
+}
 
 // Serve blocks until the listener is closed.
 func (s *Server) Serve() error {
@@ -188,19 +213,42 @@ func (s *Server) Serve() error {
 			http.NotFound(w, r)
 			return
 		}
+		// A visit with ?token= trades it for a cookie and redirects, so the
+		// token does not stay in the address bar or in history.
+		if q := r.URL.Query().Get("token"); q != "" {
+			if subtle.ConstantTimeCompare([]byte(q), []byte(s.token)) != 1 {
+				http.Error(w, "capbus panel: wrong token", http.StatusUnauthorized)
+				return
+			}
+			http.SetCookie(w, &http.Cookie{
+				Name:     sessionCookie,
+				Value:    s.token,
+				Path:     "/",
+				HttpOnly: true,
+				SameSite: http.SameSiteStrictMode,
+			})
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
+		if !s.authed(r) {
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			http.Error(w, "capbus panel: unauthorized.\nOpen the URL that `capbus ui` printed; it carries ?token=...", http.StatusUnauthorized)
+			return
+		}
 		body, err := webFS.ReadFile("web.html")
 		if err != nil {
 			http.Error(w, err.Error(), 500)
 			return
 		}
-		// The page needs the token to call the write endpoint; injecting it
-		// here is simpler than a cookie and keeps the server stateless.
-		out := strings.Replace(string(body), "__CAPBUS_TOKEN__", s.token, 1)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(out))
+		_, _ = w.Write(body)
 	})
 
 	mux.HandleFunc("/api/state", func(w http.ResponseWriter, r *http.Request) {
+		if !s.authed(r) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 		snap := Build()
 		snap.Token = ""
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -214,7 +262,7 @@ func (s *Server) Serve() error {
 			http.Error(w, "POST only", 405)
 			return
 		}
-		if r.Header.Get("X-Capbus-Token") != s.token {
+		if !s.authed(r) {
 			http.Error(w, "bad token", 403)
 			return
 		}

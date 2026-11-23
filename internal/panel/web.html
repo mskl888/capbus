@@ -84,7 +84,6 @@
 </footer>
 
 <script>
-const TOKEN = "__CAPBUS_TOKEN__";
 const cvs = document.getElementById('sky');
 const ctx = cvs.getContext('2d');
 let W = 0, H = 0, DPR = 1;
@@ -174,7 +173,7 @@ function renderRows(){
       el.classList.toggle('on', on);
       await fetch('/api/toggle', {
         method:'POST',
-        headers:{'Content-Type':'application/json','X-Capbus-Token':TOKEN},
+        credentials:'same-origin', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({name, on})
       });
       refresh();

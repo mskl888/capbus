@@ -702,7 +702,15 @@ func secretCmd(args []string) int {
 // mcpCmd runs capbus as an MCP server, so an agent can manage capabilities by
 // calling tools instead of asking the user to type shell commands.
 func mcpCmd() int {
-	srv := mcpserver.New(proto.NewReader(os.Stdin), proto.NewWriter(os.Stdout), version)
+	// Read-only unless the user says otherwise: these tools can rewrite every
+	// agent's config, and a model should not be able to do that by itself.
+	writable := false
+	for _, a := range os.Args[2:] {
+		if a == "--allow-writes" {
+			writable = true
+		}
+	}
+	srv := mcpserver.New(proto.NewReader(os.Stdin), proto.NewWriter(os.Stdout), version, writable)
 	if err := srv.Serve(); err != nil && !errors.Is(err, io.EOF) {
 		fmt.Fprintf(os.Stderr, "capbus mcp: %v\n", err)
 		return 1

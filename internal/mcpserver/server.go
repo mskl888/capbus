@@ -29,11 +29,24 @@ type Server struct {
 	in      *proto.Reader
 	out     *proto.Writer
 	version string
+	// writable gates the two tools that change this machine. A model holding
+	// this server can otherwise register a capability and write it into every
+	// agent's config by itself; the 2026-11-23 review called that too much
+	// authority for a default. Read-only unless the user started capbus with
+	// --allow-writes.
+	writable bool
 }
 
-func New(in *proto.Reader, out *proto.Writer, version string) *Server {
-	return &Server{in: in, out: out, version: version}
+func New(in *proto.Reader, out *proto.Writer, version string, writable bool) *Server {
+	return &Server{in: in, out: out, version: version, writable: writable}
 }
+
+// readOnly explains how to allow a write. It is the message every gated tool
+// returns, so the model can relay it verbatim.
+const readOnly = "error: capbus is running read-only. capbus_register and capbus_sync change this machine, " +
+	"so they are off unless the user starts the server with `capbus mcp --allow-writes` " +
+	"(set it in this MCP server's args). Ask the user to decide; do not work around it. " +
+	"capbus_list and capbus_status stay available."
 
 // Serve runs until the client closes the stream.
 func (s *Server) Serve() error {
@@ -49,7 +62,8 @@ func (s *Server) Serve() error {
 				"capabilities":    map[string]any{"tools": map[string]any{}},
 				"serverInfo":      map[string]any{"name": "capbus", "version": s.version},
 				"instructions": "capbus keeps one declared capability shared by every agent on this machine. " +
-					"Call capbus_list first, then capbus_register to add one, then capbus_sync to write it into " +
+					"This server starts read-only: capbus_list and capbus_status always work; capbus_register and " +
+					"capbus_sync need the user to have started it with --allow-writes. Call capbus_list first, then capbus_register to add one, then capbus_sync to write it into " +
 					"every installed agent. Never put credentials in a manifest: declare them under " +
 					"permissions.secrets and ask the user to run `capbus secret set NAME`.",
 			}
@@ -134,6 +148,9 @@ func (s *Server) list() string {
 }
 
 func (s *Server) register(src string) (string, bool) {
+	if !s.writable {
+		return readOnly, false
+	}
 	if strings.TrimSpace(src) == "" {
 		return "error: manifest is empty. Pass the YAML body in the manifest argument.", false
 	}
@@ -162,6 +179,9 @@ func (s *Server) register(src string) (string, bool) {
 }
 
 func (s *Server) sync(shared bool) (string, bool) {
+	if !s.writable {
+		return readOnly, false
+	}
 	ms, errs := registry.Load()
 	if len(ms) == 0 {
 		return "error: no capabilities registered", false
@@ -240,7 +260,7 @@ const toolsJSON = `{
     },
     {
       "name": "capbus_register",
-      "description": "Register an MCP capability from a YAML manifest. Pass the full YAML body. Required fields: name, kind (mcp|skill|cli), scope (global|workspace|session), source (exactly one of npm|oci|path|command), and for stateful capabilities scope must be workspace. NEVER put credentials in the manifest: list their environment variable names under permissions.secrets, then tell the user to run 'capbus secret set NAME' themselves. If the user pastes a token into the conversation, do not store it; advise them to pass it to the CLI via stdin.",
+      "description": "Register an MCP capability from a YAML manifest. Pass the full YAML body. Required fields: name, kind (mcp|skill|cli), scope (global|workspace|session), source (exactly one of npm|oci|path|command), and for stateful capabilities scope must be workspace. NEVER put credentials in the manifest: list their environment variable names under permissions.secrets, then tell the user to run 'capbus secret set NAME' themselves. If the user pastes a token into the conversation, do not store it; advise them to pass it to the CLI via stdin. This tool changes this machine, so it only works when the user started capbus with --allow-writes; otherwise it explains that and you should relay it.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -252,7 +272,7 @@ const toolsJSON = `{
     },
     {
       "name": "capbus_sync",
-      "description": "Write every registered capability into each installed agent's own config format (Claude Code, Cursor, Codex, DSH). Run this after capbus_register. Set shared=true only when the user has 'capbus supervise' running, so agents connect to one backend instead of starting a copy each.",
+      "description": "Write every registered capability into each installed agent's own config format (Claude Code, Cursor, Codex, DSH). Run this after capbus_register. Set shared=true only when the user has 'capbus supervise' running, so agents connect to one backend instead of starting a copy each. This tool rewrites every agent's config, so it only works when the user started capbus with --allow-writes.",
       "inputSchema": {
         "type": "object",
         "properties": {
