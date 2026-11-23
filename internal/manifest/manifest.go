@@ -124,6 +124,13 @@ func (m *Manifest) Validate() error {
 	default:
 		return fmt.Errorf("scope must be one of global|workspace|session, got %q", m.Scope)
 	}
+	// A shared capability means one process serves the whole machine, which is
+	// only meaningful at global scope. Anywhere else the entry would point at a
+	// backend nobody started.
+	if m.Shared && m.Scope != ScopeGlobal {
+		return fmt.Errorf("%q is shared but scope is %q; a shared capability must be scope: global",
+			m.Name, m.Scope)
+	}
 	if m.Stateful && m.Scope == ScopeGlobal {
 		return fmt.Errorf(
 			"%q is stateful and scope:global; stateful capabilities must be workspace or session scoped "+

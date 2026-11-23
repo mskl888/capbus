@@ -70,3 +70,19 @@ func hasEnv(env []string, name string) bool {
 	}
 	return false
 }
+
+// A shared capability means one process for the whole machine, which is only
+// meaningful at global scope. Anywhere else the entry points at a backend
+// nobody started.
+func TestSharedMustBeGlobal(t *testing.T) {
+	for _, scope := range []Scope{ScopeWorkspace, ScopeSession} {
+		m := Manifest{Name: "m", Kind: KindMCP, Scope: scope, Shared: true, Source: Source{Command: "/bin/true"}}
+		if err := m.Validate(); err == nil {
+			t.Errorf("shared with scope %q must be rejected", scope)
+		}
+	}
+	m := Manifest{Name: "m", Kind: KindMCP, Scope: ScopeGlobal, Shared: true, Source: Source{Command: "/bin/true"}}
+	if err := m.Validate(); err != nil {
+		t.Errorf("shared at global scope should be accepted: %v", err)
+	}
+}

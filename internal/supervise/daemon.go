@@ -330,12 +330,24 @@ func (b *backend) cachedInit() json.RawMessage {
 
 // forward rewrites the caller's id to a daemon-global one so two agents can
 // both use id 1 without colliding.
+// codeSharedUnsupported is the JSON-RPC error a shared backend returns to a
+// server that asked its client something. Several agents are attached, so
+// there is no one answer, and failing beats hanging.
+const (
+	codeSharedUnsupported = -32011
+	msgSharedUnsupported  = "capbus: this capability is shared between several agents, so it cannot ask one of them " +
+		"(sampling, roots, elicitation). Give it scope: workspace or clear shared, so each agent gets its own process."
+)
+
 func (b *backend) forward(c *client, m *proto.Message) {
+	// Keep the caller's id before rewriting it: an error has to come back with
+	// the id the caller used, or it cannot match the answer to its request.
+	orig := append(json.RawMessage(nil), m.ID...)
 	b.mu.Lock()
 	b.nextID++
 	gid := b.nextID
 	key := strconv.FormatInt(gid, 10)
-	b.pending[key] = &pending{c: c, origID: append(json.RawMessage(nil), m.ID...)}
+	b.pending[key] = &pending{c: c, origID: orig}
 	b.mu.Unlock()
 
 	m.SetID(gid)
@@ -343,7 +355,7 @@ func (b *backend) forward(c *client, m *proto.Message) {
 		b.mu.Lock()
 		delete(b.pending, key)
 		b.mu.Unlock()
-		_ = c.wr.Write(proto.ErrorResponse(m.ID, -32000, "capability unavailable: "+err.Error()))
+		_ = c.wr.Write(proto.ErrorResponse(orig, -32000, "capability unavailable: "+err.Error()))
 	}
 }
 
@@ -454,8 +466,11 @@ func (b *backend) start() error {
 	wr := proto.NewWriter(stdin)
 	rd := proto.NewReader(stdout)
 
+	// Publish the process first (so a failed handshake can be killed), but the
+	// writer only after the handshake: a client that arrives mid-startup must
+	// get "not running" rather than write into a pipe nothing is reading.
 	b.mu.Lock()
-	b.cmd, b.stdin, b.wr, b.rd = cmd, stdin, wr, rd
+	b.cmd, b.stdin = cmd, stdin
 	b.gen++
 	gen := b.gen
 	b.mu.Unlock()
@@ -468,7 +483,7 @@ func (b *backend) start() error {
 		return fmt.Errorf("handshake: %w", err)
 	}
 	b.mu.Lock()
-	b.initRes = initRes
+	b.initRes, b.wr, b.rd = initRes, wr, rd
 	b.mu.Unlock()
 	b.log.Printf("%s: ready", b.spec.Name)
 	return nil
@@ -567,9 +582,14 @@ func (b *backend) pump() {
 		case m.IsNotification():
 			b.broadcast(m)
 		default:
-			// Server->client requests (sampling, roots) are ambiguous with
-			// several clients: dropping is honest, guessing is not.
-			b.log.Printf("%s: dropped server request %q (shared instance cannot answer for one agent)", b.spec.Name, m.Method)
+			// A server asking its client something - sampling, roots,
+			// elicitation - has no single answer here: several agents are
+			// attached and each could answer differently. Dropping the request
+			// left it hanging, which looks like a bug in that server. Answer
+			// with an error instead: the server fails fast and the agent sees
+			// why.
+			b.log.Printf("%s: refusing server request %q: a shared backend cannot answer for one agent", b.spec.Name, m.Method)
+			_ = b.writeBackend(proto.ErrorResponse(m.ID, codeSharedUnsupported, msgSharedUnsupported))
 		}
 	}
 }

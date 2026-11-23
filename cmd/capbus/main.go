@@ -58,7 +58,7 @@ func main() {
 	case "sync":
 		os.Exit(syncCmd(os.Args[2:]))
 	case "supervise":
-		os.Exit(superviseCmd())
+		os.Exit(superviseCmd(os.Args[2:]))
 	case "down":
 		os.Exit(downCmd())
 	case "bridge":
@@ -374,7 +374,37 @@ func syncCmd(args []string) int {
 }
 
 // superviseCmd runs the shared backends in the foreground. Ctrl-C stops it.
-func superviseCmd() int {
+// superviseCmd hosts one process per capability for every agent to share.
+//
+// It is experimental and says so: MCP stdio is a single-session protocol, and
+// multiplexing several agents over one process loses things a user cannot see.
+func superviseCmd(args []string) int {
+	experimental := false
+	for _, a := range args {
+		if a == "--experimental" {
+			experimental = true
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "capbus supervise: unknown flag %q\n", a)
+		return 2
+	}
+	if !experimental {
+		for _, line := range []string{
+			"capbus supervise is experimental and needs --experimental",
+			"",
+			"A shared backend multiplexes several agents over one stdio process. That has costs you cannot see:",
+			"  - the backend handshakes once, so it never learns each agent's capabilities",
+			"  - a server asking its client (sampling, roots, elicitation) gets an error, not an answer",
+			"  - notifications are delivered to every attached agent",
+			"",
+			"Use it for tools-only capabilities. Anything that needs its own session should stay unshared",
+			"(scope: workspace). Run `capbus supervise --experimental` to accept these terms.",
+		} {
+			fmt.Fprintln(os.Stderr, i18n.T(line))
+		}
+		return 2
+	}
+
 	ms, errs := registry.Load()
 	for _, e := range errs {
 		fmt.Fprintf(os.Stderr, "! %v\n", e)
@@ -410,6 +440,7 @@ func superviseCmd() int {
 	}()
 
 	fmt.Printf("supervising %d capability(ies); Ctrl-C to stop\n", len(d.State().Capabilities))
+	fmt.Println(i18n.T("warning: shared mode is experimental; tools-only capabilities only, and notifications reach every attached agent"))
 	fmt.Println(i18n.T("recording tool calls (metadata only) to") + " " + activity.Path())
 	fmt.Println(i18n.T("clear it any time with: capbus activity --clear"))
 	_ = audit.Append("supervise", fmt.Sprintf("%d capabilities", len(d.State().Capabilities)))

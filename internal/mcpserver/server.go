@@ -195,22 +195,22 @@ func (s *Server) sync(shared bool) (string, bool) {
 		b.WriteString("Ask the user to fix them; do not work around it.\n")
 		return b.String(), false
 	}
-	if shared {
-		if st, err := supervise.LoadState(); err != nil || len(st.Capabilities) == 0 {
-			return "error: shared=true requires a running backend. Ask the user to run capbus supervise, " +
-				"or call capbus_sync with shared=false.", false
-		}
-	}
 	effective := enabled.Filter(ms)
+	// Check the capability that is actually being written, not just "a backend
+	// is running": another capability's process says nothing about this one.
+	st, stErr := supervise.LoadState()
 	for _, m := range effective {
-		if !m.Shared {
+		if !shared && !m.Shared {
 			continue
 		}
-		if st, err := supervise.LoadState(); err != nil || len(st.Capabilities) == 0 {
-			return "error: capability " + m.Name + " must be shared, but no shared backend is running. " +
-				"Ask the user to run `capbus supervise`; per-agent copies would diverge silently.", false
+		if stErr != nil || len(st.Capabilities) == 0 {
+			return "error: " + m.Name + " must be shared, but no shared backend is running. " +
+				"Ask the user to run `capbus supervise --experimental`; per-agent copies would diverge silently.", false
 		}
-		break
+		if _, ok := st.Capabilities[m.Name]; !ok {
+			return "error: " + m.Name + " is shared but the backend is not hosting it. " +
+				"Ask the user to restart `capbus supervise --experimental` so it includes this capability.", false
+		}
 	}
 	out := materialize.Sync(effective, materialize.Options{Shared: shared})
 	var b strings.Builder
