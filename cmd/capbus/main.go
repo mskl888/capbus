@@ -1333,27 +1333,43 @@ func adoptCmd(args []string) int {
 	if p.Cwd != "" {
 		fmt.Printf("  workdir      %s\n", p.Cwd)
 	}
-	fmt.Printf("  profile      %s\n", p.ProfilePatch)
-	fmt.Printf("  plugin file  %s\n\n", p.PackagePatch)
-	fmt.Println("this entry will be appended to the profile patch:")
-	fmt.Println(p.Block())
+	fmt.Printf("  profile      %s\n\n", p.Profile)
+	add, remove := p.Commands()
+	fmt.Println("capbus will:")
+	fmt.Println("  - declare this server as a capability (~/.capbus/capabilities/)")
+	fmt.Println("  - enable it and regenerate the DSH plugin bundle")
+	fmt.Println("then you run, in DSH's own plugin manager:")
+	fmt.Println("  1. " + add)
+	if remove != "" {
+		fmt.Println("  2. " + remove + "   (after confirming the tools still work)")
+	}
 
 	if !apply {
-		fmt.Println("dry run: nothing was written. add --apply to perform the handover.")
+		fmt.Println("\ndry run: nothing was written. add --apply to perform the capbus side.")
 		return 0
 	}
 
-	steps, err := adopt.Apply(p)
+	res, err := adopt.Apply(p)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "capbus adopt: %v\n", err)
 		return 1
 	}
-	fmt.Println("done:")
-	for _, s := range steps {
+	fmt.Println("\ncapbus wrote:")
+	for _, s := range res.Synced {
 		fmt.Println("  " + s)
 	}
-	fmt.Println("\nrestart the agent for this to take effect, then check that its tools still appear.")
-	fmt.Println("to reverse everything: capbus undo")
+	if res.Declared {
+		fmt.Println("  declared capability " + server)
+	}
+	if res.Enabled {
+		fmt.Println("  enabled " + server)
+	}
+	fmt.Println("\nnow run these yourself (capbus does not touch DSH's plugin manager):")
+	fmt.Println("  1. " + res.Add)
+	if res.Remove != "" {
+		fmt.Println("  2. " + res.Remove + "   (only after the tools still work)")
+	}
+	fmt.Println("\nrestart DSH for this to take effect. to reverse: capbus undo, then re-add the original plugin if you removed it.")
 	return 0
 }
 
@@ -1367,7 +1383,8 @@ func undoCmd() int {
 	for _, s := range steps {
 		fmt.Println(s)
 	}
-	fmt.Println("\nrestart the agent for the restored files to take effect.")
+	fmt.Println("\ncapbus switched the capability off and refreshed its bundle.")
+	fmt.Println("run any printed DSH command, then restart DSH, for the agent to see it.")
 	return 0
 }
 
@@ -1471,25 +1488,32 @@ func injectCmd(args []string) int {
 	if pl.Cwd != "" {
 		fmt.Printf("  workdir      %s\n", pl.Cwd)
 	}
-	fmt.Printf("  profile      %s\n\n", pl.ProfilePatch)
-	fmt.Println("this entry will be appended to the profile patch:")
-	fmt.Println(pl.Block())
+	fmt.Printf("  profile      %s\n\n", pl.Profile)
+	add, _ := pl.Commands()
+	fmt.Println("capbus will enable this capability and regenerate the DSH plugin bundle.")
+	fmt.Println("then you run, in DSH's own plugin manager:")
+	fmt.Println("  " + add)
 
 	if !apply {
-		fmt.Println("dry run: nothing was written. add --apply to inject.")
+		fmt.Println("\ndry run: nothing was written. add --apply to inject.")
 		return 0
 	}
 
-	steps, err := adopt.Apply(pl)
+	res, err := adopt.Apply(pl)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "capbus inject: %v\n", err)
 		return 1
 	}
-	fmt.Println("done:")
-	for _, s := range steps {
+	fmt.Println("\ncapbus wrote:")
+	for _, s := range res.Synced {
 		fmt.Println("  " + s)
 	}
-	fmt.Println("\nrestart the agent for this to take effect. to reverse: capbus undo")
+	if res.Enabled {
+		fmt.Println("  enabled " + name)
+	}
+	fmt.Println("\nnow run this yourself (capbus does not touch DSH's plugin manager):")
+	fmt.Println("  " + res.Add)
+	fmt.Println("\nrestart DSH for this to take effect. to reverse: capbus undo")
 	return 0
 }
 
