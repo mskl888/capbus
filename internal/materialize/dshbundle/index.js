@@ -15,10 +15,6 @@ const run = promisify(execFile)
 
 export const inject = ['webServer']
 
-export const Config = {
-  binary: { type: 'string', default: 'capbus', description: 'The capbus executable to run.' },
-}
-
 function send(res, status, body) {
   const text = JSON.stringify(body)
   res.statusCode = status
