@@ -272,9 +272,17 @@ func (c *client) serve() {
 		}
 		switch {
 		case m.Method == "initialize":
-			// Answer locally. The backend is already initialised; forwarding a
-			// second initialize would reset or error on the shared instance.
-			c.reply(m.ID, c.b.cachedInit())
+			// Answer locally only after the real backend handshake. Returning an
+			// invented empty capability set makes the agent believe the backend has
+			// no tools, which is much harder to diagnose than an explicit not-ready
+			// error.
+			initRes := c.b.cachedInit()
+			if len(initRes) == 0 {
+				_ = c.wr.Write(proto.ErrorResponse(m.ID, -32000,
+					"capability is not ready: its MCP handshake has not completed; retry after supervise reports ready"))
+				continue
+			}
+			c.reply(m.ID, initRes)
 		case m.Method == "notifications/initialized":
 			// Nothing to forward: the handshake happened once, at startup.
 		case m.IsRequest():
@@ -307,12 +315,7 @@ func (b *backend) cachedInit() json.RawMessage {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if len(b.initRes) == 0 {
-		out, _ := json.Marshal(map[string]any{
-			"protocolVersion": "2025-06-18",
-			"capabilities":    map[string]any{},
-			"serverInfo":      map[string]any{"name": "capbus/" + b.spec.Name, "version": "shared"},
-		})
-		return out
+		return nil
 	}
 	var v map[string]any
 	if err := json.Unmarshal(b.initRes, &v); err != nil {

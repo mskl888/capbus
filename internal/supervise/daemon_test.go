@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -29,6 +30,14 @@ func TestHelperBackend(t *testing.T) {
 		}
 		switch m.Method {
 		case "initialize":
+			if gate := os.Getenv("GO_WANT_HELPER_GATE"); gate != "" {
+				for {
+					if _, err := os.Stat(gate); err == nil {
+						break
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+			}
 			_ = wr.Write(proto.Response(m.ID,
 				`{"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"fake-backend","version":"1.0"}}`))
 		case "notifications/initialized":
@@ -93,6 +102,43 @@ func startDaemon(t *testing.T) *Daemon {
 	}
 	t.Cleanup(d.Close)
 	return d
+}
+
+func TestInitializeBeforeReadyFailsInsteadOfInventingCapabilities(t *testing.T) {
+	gate := filepath.Join(t.TempDir(), "ready")
+	m := helperManifest()
+	m.Source.Env["GO_WANT_HELPER_GATE"] = gate
+	t.Setenv("CAPBUS_HOME", t.TempDir())
+	d := New([]manifest.Manifest{m}, log.New(os.Stderr, "[test] ", 0))
+	if err := d.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	t.Cleanup(d.Close)
+
+	c := attach(t, d.backends[0])
+	defer c.c.Close()
+	if err := c.wr.Write(proto.Request(1, "initialize",
+		`{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"early","version":"0"}}`)); err != nil {
+		t.Fatal(err)
+	}
+	_ = c.c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	got, err := c.rd.Read()
+	if err != nil {
+		t.Fatalf("read initialize response: %v", err)
+	}
+	if got.Error == nil {
+		t.Fatalf("an unready backend must not invent capabilities: %s", got.Result)
+	}
+	if got.IDString() != "1" {
+		t.Fatalf("error used the wrong request id: %s", got.ID)
+	}
+
+	if err := os.WriteFile(gate, []byte("ready"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.WaitReady(5 * time.Second); err != nil {
+		t.Fatalf("backend did not become ready after the gate opened: %v", err)
+	}
 }
 
 func TestBadTokenIsRejected(t *testing.T) {
