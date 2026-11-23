@@ -350,13 +350,7 @@ func syncCmd(args []string) int {
 			fmt.Println(i18n.T("wrote") + " " + w)
 		}
 	}
-	if conflicts := out.Conflicts(); len(conflicts) > 0 {
-		fmt.Fprintln(os.Stderr, i18n.T("name collision(s): these capabilities were NOT written"))
-		for _, c := range conflicts {
-			fmt.Fprintln(os.Stderr, "  "+c)
-		}
-		return 1
-	}
+
 	_ = audit.Append("sync", fmt.Sprintf("%d capabilities -> %d files", len(ms), len(out.Wrote)))
 	if len(ms) > 0 {
 		names := make([]string, 0, len(ms))

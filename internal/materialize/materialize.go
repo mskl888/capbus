@@ -37,6 +37,10 @@ type Change struct {
 type Rendered struct {
 	Files   map[string][]byte
 	Changes []Change
+	// Claimed is the set of server names capbus may own in this agent once the
+	// write lands. It is what the ledger records next time, so a name that
+	// collided - and was therefore never written - must not appear here.
+	Claimed []string
 }
 
 // Agent is one place capabilities have to be written.
@@ -124,7 +128,9 @@ func saveLedger(l map[string][]string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(ledgerPath(), append(b, '\n'), 0o600)
+	// Same rule as an agent config: never leave the ledger half written, or a
+	// later run reads ownership that was never recorded.
+	return writeAtomic(ledgerPath(), append(b, '\n'))
 }
 
 func ownedSet(l map[string][]string, agent string) map[string]bool {
@@ -144,7 +150,7 @@ func ownedSet(l map[string][]string, agent string) map[string]bool {
 //  2. An entry capbus did write (shape and ledger) is updated to match the
 //     manifest, or removed when the capability is no longer declared.
 //  3. Everything else is left as it was.
-func mergeServers(existing map[string]any, ms []manifest.Manifest, opts Options, exe string, owned map[string]bool) (map[string]any, []Change) {
+func mergeServers(existing map[string]any, ms []manifest.Manifest, opts Options, exe string, owned map[string]bool) (map[string]any, []Change, []string) {
 	want := make(map[string]manifest.Manifest, len(ms))
 	for _, m := range ms {
 		want[m.Name] = m
@@ -156,6 +162,7 @@ func mergeServers(existing map[string]any, ms []manifest.Manifest, opts Options,
 	}
 
 	var changes []Change
+	var claimed []string
 
 	for name, v := range existing {
 		if _, declared := want[name]; declared {
@@ -186,6 +193,7 @@ func mergeServers(existing map[string]any, ms []manifest.Manifest, opts Options,
 		if !exists {
 			merged[m.Name] = next
 			changes = append(changes, Change{Name: m.Name, Action: "added"})
+			claimed = append(claimed, m.Name)
 			continue
 		}
 		curTbl, ok := cur.(map[string]any)
@@ -194,21 +202,27 @@ func mergeServers(existing map[string]any, ms []manifest.Manifest, opts Options,
 				Detail: "an entry with this name is not a table; left as it is, capability not written"})
 			continue
 		}
-		if !looksOurs(curTbl, exe) {
+		// Both conditions, not either: the entry must look like ours AND the
+		// ledger must say capbus wrote it. Shape alone would adopt a user's
+		// hand-written entry of the same name and overwrite its arguments.
+		if !looksOurs(curTbl, exe) || !owned[m.Name] {
 			changes = append(changes, Change{Name: m.Name, Action: "conflict",
 				Detail: "an entry with this name was not written by capbus; kept, capability not written"})
 			continue
 		}
 		if sameEntry(curTbl, next) {
 			changes = append(changes, Change{Name: m.Name, Action: "unchanged"})
+			claimed = append(claimed, m.Name)
 			continue
 		}
 		merged[m.Name] = next
 		changes = append(changes, Change{Name: m.Name, Action: "updated"})
+		claimed = append(claimed, m.Name)
 	}
 
 	sort.Slice(changes, func(i, j int) bool { return changes[i].Name < changes[j].Name })
-	return merged, changes
+	sort.Strings(claimed)
+	return merged, changes, claimed
 }
 
 // sameEntry compares the fields capbus owns, so an agent's own extra keys on a
@@ -288,6 +302,7 @@ func Sync(ms []manifest.Manifest, opts Options) Outcome {
 	out := Outcome{}
 
 	var writes []write
+	claimed := map[string][]string{}
 
 	for _, a := range Agents() {
 		if !a.Detect() {
@@ -304,6 +319,7 @@ func Sync(ms []manifest.Manifest, opts Options) Outcome {
 			c.Agent = a.Name()
 			out.Changes = append(out.Changes, c)
 		}
+		claimed[a.Name()] = r.Claimed
 		keys := make([]string, 0, len(r.Files))
 		for k := range r.Files {
 			keys = append(keys, k)
@@ -328,6 +344,16 @@ func Sync(ms []manifest.Manifest, opts Options) Outcome {
 	// A plan that failed writes nothing. Writing the agents that happened to
 	// render would leave the machine in a state no single decision produced.
 	if len(out.Errs) > 0 {
+		return out
+	}
+
+	// A name collision is a plan failure too: the capability cannot be written,
+	// and writing the others would make the exit status a lie about how much of
+	// the manifest is actually in effect.
+	if c := out.Conflicts(); len(c) > 0 {
+		out.Errs = append(out.Errs, fmt.Errorf(
+			"name collision(s), nothing was written: %s - rename the capability, or remove the server "+
+				"the user already has under that name", strings.Join(c, ", ")))
 		return out
 	}
 
@@ -374,20 +400,14 @@ func Sync(ms []manifest.Manifest, opts Options) Outcome {
 		out.Wrote = append(out.Wrote, fmt.Sprintf("%s -> %s", w.agent, w.path))
 	}
 
-	// Only now is it true that capbus wrote these names.
-	next := map[string][]string{}
-	for _, a := range Agents() {
-		if !a.Detect() {
-			continue
-		}
-		names := make([]string, 0, len(ms))
-		for _, m := range ms {
-			names = append(names, m.Name)
-		}
-		sort.Strings(names)
-		next[a.Name()] = names
+	// Only now is it true that capbus wrote these names - and only the names it
+	// actually claimed. A conflicted name was never written, so recording it
+	// would give a later run a false reason to delete the user's entry.
+	if err := saveLedger(claimed); err != nil {
+		out.Errs = append(out.Errs, fmt.Errorf(
+			"the agent configs were written, but the ownership ledger could not be saved: %w "+
+				"(run `capbus sync` again once that is fixed)", err))
 	}
-	_ = saveLedger(next)
 
 	sort.Strings(out.Wrote)
 	return out

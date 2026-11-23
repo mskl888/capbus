@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/capbus/capbus/internal/manifest"
@@ -127,20 +128,101 @@ func TestHandWrittenCapbusShapedEntrySurvives(t *testing.T) {
 	}
 }
 
-// A name collision is reported, not silently skipped.
+// A name collision is reported and stops the whole sync.
 func TestConflictIsReported(t *testing.T) {
+	home := withHome(t)
+	p := filepath.Join(home, ".claude.json")
+	original := `{"mcpServers":{"github":{"command":"/their/github"}}}`
+	if err := os.WriteFile(p, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out := Sync(capSet(), Options{})
+	if !out.Failed() {
+		t.Fatal("a collision must fail the sync")
+	}
+	c := out.Conflicts()
+	if len(c) != 1 || c[0] != "claude-code/github" {
+		t.Fatalf("the collision was not reported: %v", c)
+	}
+	if b, _ := os.ReadFile(p); string(b) != original {
+		t.Fatalf("the file changed despite a collision:\n%s", b)
+	}
+}
+
+// Same name, same arguments: still a collision. Identical bytes are not
+// permission to claim someone else's entry.
+func TestIdenticalEntriesStillConflict(t *testing.T) {
+	home := withHome(t)
+	p := filepath.Join(home, ".claude.json")
+	// Build an entry byte-identical to what capbus would write for "github".
+	m := capSet()[0]
+	entry := toEntryMap(m, Options{}, selfExe())
+	servers := map[string]any{"github": entry}
+	root := map[string]any{"mcpServers": servers}
+	b, err := json.Marshal(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out := Sync(capSet(), Options{})
+	if !out.Failed() {
+		t.Fatal("an identical entry capbus did not write must still conflict")
+	}
+	b, _ = os.ReadFile(p)
+	var got map[string]any
+	_ = json.Unmarshal(b, &got)
+	sv, _ := got["mcpServers"].(map[string]any)
+	if _, ok := sv["github"]; !ok {
+		t.Fatal("the user's identical entry was removed")
+	}
+}
+
+// A conflicted name never reaches the ledger.
+func TestConflictNeverEntersLedger(t *testing.T) {
 	home := withHome(t)
 	p := filepath.Join(home, ".claude.json")
 	if err := os.WriteFile(p, []byte(`{"mcpServers":{"github":{"command":"/their/github"}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	out := Sync(capSet(), Options{})
-	if out.Failed() {
-		t.Fatalf("a collision is not a failure of the sync itself: %v", out.Errs)
+	if out := Sync(capSet(), Options{}); !out.Failed() {
+		t.Fatal("test premise: this should collide")
 	}
-	c := out.Conflicts()
-	if len(c) != 1 || c[0] != "claude-code/github" {
-		t.Fatalf("the collision was not reported: %v", c)
+	l := loadLedger()
+	for agent, names := range l {
+		for _, n := range names {
+			if n == "github" {
+				t.Fatalf("the conflicted name entered the ledger for %s: %v", agent, names)
+			}
+		}
+	}
+}
+
+// A ledger that cannot be written is not a silent success.
+func TestLedgerWriteFailureIsReported(t *testing.T) {
+	home := withHome(t)
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Put a file where the ledger's directory would be, so creating it fails.
+	blocked := filepath.Join(home, "blocked")
+	if err := os.WriteFile(blocked, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CAPBUS_HOME", filepath.Join(blocked, "capbus"))
+
+	out := Sync(capSet(), Options{})
+	if !out.Failed() {
+		t.Fatal("a ledger that cannot be saved must be reported")
+	}
+	joined := ""
+	for _, e := range out.Errs {
+		joined += e.Error()
+	}
+	if !strings.Contains(joined, "ledger") {
+		t.Fatalf("the error does not mention the ledger: %s", joined)
 	}
 }
 

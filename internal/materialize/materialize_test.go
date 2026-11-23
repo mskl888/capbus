@@ -367,7 +367,8 @@ func TestSyncRemovesOnlyItsOwn(t *testing.T) {
 }
 
 // A manifest whose name collides with a server capbus did not write loses: the
-// user's entry is kept and the collision is reported.
+// user's entry is kept, the collision is reported, and nothing is written at
+// all - a partial sync behind a non-zero exit would be a lie.
 func TestSyncSkipsNameCollision(t *testing.T) {
 	home := withHome(t)
 	p := filepath.Join(home, ".claude.json")
@@ -376,8 +377,11 @@ func TestSyncSkipsNameCollision(t *testing.T) {
 		t.Fatal(err)
 	}
 	synced := Sync(capSet(), Options{})
-	if synced.Failed() {
-		t.Fatalf("errors: %v", synced.Errs)
+	if !synced.Failed() {
+		t.Fatal("a name collision must fail the sync")
+	}
+	if len(synced.Wrote) != 0 {
+		t.Fatalf("nothing may be written when a name collides, wrote %v", synced.Wrote)
 	}
 	changes := synced.Changes
 	var got map[string]any

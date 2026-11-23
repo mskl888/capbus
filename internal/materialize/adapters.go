@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	toml "github.com/pelletier/go-toml/v2"
@@ -38,14 +39,14 @@ func (a jsonAgent) Render(ms []manifest.Manifest, opts Options) (Rendered, error
 	if err != nil {
 		return Rendered{}, err
 	}
-	merged, changes := mergeServers(serversOf(root, a.dialect), ms, opts, selfExe(), ownedSet(loadLedger(), a.name))
+	merged, changes, claimed := mergeServers(serversOf(root, a.dialect), ms, opts, selfExe(), ownedSet(loadLedger(), a.name))
 	root[a.dialect] = merged
 
 	out, err := json.MarshalIndent(root, "", "  ")
 	if err != nil {
 		return Rendered{}, err
 	}
-	return Rendered{Files: map[string][]byte{"": out}, Changes: changes}, nil
+	return Rendered{Files: map[string][]byte{"": out}, Changes: changes, Claimed: claimed}, nil
 }
 
 type claude struct{}
@@ -100,7 +101,7 @@ func (codex) Render(ms []manifest.Manifest, opts Options) (Rendered, error) {
 	}
 
 	existing, _ := doc["mcp_servers"].(map[string]any)
-	merged, changes := mergeServers(existing, ms, opts, selfExe(), ownedSet(loadLedger(), "codex"))
+	merged, changes, claimed := mergeServers(existing, ms, opts, selfExe(), ownedSet(loadLedger(), "codex"))
 	doc["mcp_servers"] = merged
 
 	var buf bytes.Buffer
@@ -109,7 +110,7 @@ func (codex) Render(ms []manifest.Manifest, opts Options) (Rendered, error) {
 	if err := enc.Encode(doc); err != nil {
 		return Rendered{}, err
 	}
-	return Rendered{Files: map[string][]byte{"": buf.Bytes()}, Changes: changes}, nil
+	return Rendered{Files: map[string][]byte{"": buf.Bytes()}, Changes: changes, Claimed: claimed}, nil
 }
 
 // --- bundle dialect: DSH ----------------------------------------------------
@@ -171,9 +172,12 @@ func (d dsh) Render(ms []manifest.Manifest, opts Options) (Rendered, error) {
 		}
 	}
 	var changes []Change
+	claimed := make([]string, 0, len(ms))
 	for _, m := range ms {
 		changes = append(changes, Change{Name: m.Name, Action: action, Detail: "dsh bundle"})
+		claimed = append(claimed, m.Name)
 	}
+	sort.Strings(claimed)
 
 	return Rendered{
 		Files: map[string][]byte{
@@ -181,6 +185,7 @@ func (d dsh) Render(ms []manifest.Manifest, opts Options) (Rendered, error) {
 			"cordis.patch.yml": patch,
 		},
 		Changes: changes,
+		Claimed: claimed,
 	}, nil
 }
 
