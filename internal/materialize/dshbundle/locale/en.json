@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "capbus",
+    "description": "Every MCP capability declared once on this machine, written into each agent's own config, with a sidebar that shows what is on and what it costs.",
+    "detail": "docs/DETAIL.md"
+  }
+}

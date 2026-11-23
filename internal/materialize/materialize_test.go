@@ -195,10 +195,14 @@ func TestDSHEmitsBundle(t *testing.T) {
 	if err := yaml.Unmarshal(patch, &doc); err != nil {
 		t.Fatalf("cordis.patch.yml is not valid YAML: %v\n%s", err, patch)
 	}
-	if len(doc) != 1 || len(doc[0].Insert) != 1 {
-		t.Fatalf("expected one insert with one entry, got %+v", doc)
+	if len(doc) != 1 || len(doc[0].Insert) != 2 {
+		t.Fatalf("expected the plugin row plus one capability, got %+v", doc)
 	}
-	e := doc[0].Insert[0]
+	// One package: the panel plugin first, then one row per capability.
+	if first := doc[0].Insert[0]; first.ID != "capbus" || first.Name != "@local/capbus" {
+		t.Fatalf("the first row is not the capbus plugin: %+v", first)
+	}
+	e := doc[0].Insert[1]
 	if e.Name != "@deepseek-ai/dsh-mcp-client" {
 		t.Fatalf("wrong plugin: %q", e.Name)
 	}
@@ -237,9 +241,9 @@ func TestSyncWritesEveryDetectedAgent(t *testing.T) {
 		t.Fatalf("errors: %v", out.Errs)
 	}
 	wrote := out.Wrote
-	// claude + cursor + codex are single files; dsh writes two files.
-	if len(wrote) != 5 {
-		t.Fatalf("expected 5 files written, got %d: %v", len(wrote), wrote)
+	// claude + cursor + codex are single files; dsh writes the whole bundle.
+	if len(wrote) != 11 {
+		t.Fatalf("expected 11 files written (3 agent configs + 8 bundle files), got %d: %v", len(wrote), wrote)
 	}
 	for _, p := range []string{
 		filepath.Join(home, ".claude.json"),

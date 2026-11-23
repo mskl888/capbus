@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "capbus",
+    "description": "能力只声明一次，按每个 Agent 自己的格式写进它的配置；侧边栏显示哪些开着、每轮要花多少 token。",
+    "detail": "docs/DETAIL.md"
+  }
+}
