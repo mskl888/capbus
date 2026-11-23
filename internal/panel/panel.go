@@ -65,7 +65,7 @@ type Snapshot struct {
 	Nodes      []Node   `json:"nodes"`
 	Findings   []string `json:"findings"`
 	Generated  string   `json:"generated"`
-	Token      string   `json:"token"`
+	Token      string   `json:"token,omitempty"`
 }
 
 // Build reads the local state. Read-only.
