@@ -38,7 +38,7 @@ func (a jsonAgent) Render(ms []manifest.Manifest, opts Options) (Rendered, error
 	if err != nil {
 		return Rendered{}, err
 	}
-	merged, changes := mergeServers(serversOf(root, a.dialect), ms, opts, selfExe())
+	merged, changes := mergeServers(serversOf(root, a.dialect), ms, opts, selfExe(), ownedSet(loadLedger(), a.name))
 	root[a.dialect] = merged
 
 	out, err := json.MarshalIndent(root, "", "  ")
@@ -89,14 +89,18 @@ func (codex) Detect() bool {
 func (codex) Render(ms []manifest.Manifest, opts Options) (Rendered, error) {
 	path := filepath.Join(userHome(), ".codex", "config.toml")
 	doc := map[string]any{}
-	if b, err := os.ReadFile(path); err == nil && len(b) > 0 {
+	if b, err := os.ReadFile(path); err != nil {
+		if !os.IsNotExist(err) {
+			return Rendered{}, fmt.Errorf("%s: cannot read the existing config (refusing to overwrite blind): %w", path, err)
+		}
+	} else if len(b) > 0 {
 		if err := toml.Unmarshal(b, &doc); err != nil {
 			return Rendered{}, fmt.Errorf("%s: existing config is not valid TOML (refusing to overwrite): %w", path, err)
 		}
 	}
 
 	existing, _ := doc["mcp_servers"].(map[string]any)
-	merged, changes := mergeServers(existing, ms, opts, selfExe())
+	merged, changes := mergeServers(existing, ms, opts, selfExe(), ownedSet(loadLedger(), "codex"))
 	doc["mcp_servers"] = merged
 
 	var buf bytes.Buffer

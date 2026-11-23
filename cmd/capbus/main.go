@@ -305,6 +305,12 @@ func syncCmd(args []string) int {
 	for _, e := range errs {
 		fmt.Fprintf(os.Stderr, "! %v\n", e)
 	}
+	// A manifest we cannot read is a manifest we cannot reason about: writing
+	// the ones that did load would let a typo delete the others' entries.
+	if len(errs) > 0 {
+		fmt.Fprintln(os.Stderr, i18n.T("refusing to sync: fix the manifest error(s) above first; nothing was written"))
+		return 1
+	}
 	// A disabled capability is not written at all, so its tool schemas never
 	// reach a model's context. Filtering after writing would save nothing.
 	ms = enabled.Filter(ms)
@@ -319,26 +325,39 @@ func syncCmd(args []string) int {
 			return 1
 		}
 	}
-	wrote, changes, syncErrs := materialize.Sync(ms, opts)
-	for _, e := range syncErrs {
+	out := materialize.Sync(ms, opts)
+	for _, e := range out.Errs {
 		fmt.Fprintf(os.Stderr, "! %v\n", e)
 	}
-	printChanges(changes, opts.DryRun)
-	if len(wrote) == 0 {
-		if len(syncErrs) == 0 {
+	printChanges(out.Changes, opts.DryRun)
+	if out.Detected == 0 {
+		if !out.Failed() {
 			fmt.Println(i18n.T("no agent config found - install an agent, or run `capbus doctor`"))
 		}
 		return 1
 	}
-	if opts.DryRun {
+	if out.Failed() {
+		return 1
+	}
+	switch {
+	case opts.DryRun:
 		fmt.Println()
 		fmt.Println(i18n.T("dry run: nothing was written; drop --dry-run to apply"))
-	} else {
-		for _, w := range wrote {
+	case len(out.Wrote) == 0:
+		fmt.Println(i18n.T("already up to date: every agent already matches the manifest"))
+	default:
+		for _, w := range out.Wrote {
 			fmt.Println(i18n.T("wrote") + " " + w)
 		}
 	}
-	_ = audit.Append("sync", fmt.Sprintf("%d capabilities -> %d files", len(ms), len(wrote)))
+	if conflicts := out.Conflicts(); len(conflicts) > 0 {
+		fmt.Fprintln(os.Stderr, i18n.T("name collision(s): these capabilities were NOT written"))
+		for _, c := range conflicts {
+			fmt.Fprintln(os.Stderr, "  "+c)
+		}
+		return 1
+	}
+	_ = audit.Append("sync", fmt.Sprintf("%d capabilities -> %d files", len(ms), len(out.Wrote)))
 	if len(ms) > 0 {
 		names := make([]string, 0, len(ms))
 		for _, m := range ms {
@@ -356,9 +375,6 @@ func syncCmd(args []string) int {
 		if tokens > 20000 {
 			fmt.Println(i18n.T("that is a large slice of the context window: `capbus use <name>` narrows it"))
 		}
-	}
-	if len(syncErrs) > 0 {
-		return 1
 	}
 	return 0
 }

@@ -186,6 +186,15 @@ func (s *Server) sync(shared bool) (string, bool) {
 	if len(ms) == 0 {
 		return "error: no capabilities registered", false
 	}
+	if len(errs) > 0 {
+		var b strings.Builder
+		b.WriteString("error: refusing to sync, the registry has invalid manifest(s); nothing was written:\n")
+		for _, e := range errs {
+			b.WriteString("  " + e.Error() + "\n")
+		}
+		b.WriteString("Ask the user to fix them; do not work around it.\n")
+		return b.String(), false
+	}
 	if shared {
 		if st, err := supervise.LoadState(); err != nil || len(st.Capabilities) == 0 {
 			return "error: shared=true requires a running backend. Ask the user to run capbus supervise, " +
@@ -203,21 +212,39 @@ func (s *Server) sync(shared bool) (string, bool) {
 		}
 		break
 	}
-	wrote, _, syncErrs := materialize.Sync(effective, materialize.Options{Shared: shared})
+	out := materialize.Sync(effective, materialize.Options{Shared: shared})
 	var b strings.Builder
-	for _, w := range wrote {
+	for _, w := range out.Wrote {
 		b.WriteString("wrote " + w + "\n")
 	}
-	for _, e := range syncErrs {
+	for _, e := range out.Errs {
 		b.WriteString("error: " + e.Error() + "\n")
 	}
 	for _, e := range errs {
 		b.WriteString("manifest error: " + e.Error() + "\n")
 	}
-	if len(wrote) == 0 {
+	if len(out.Wrote) == 0 && !out.Failed() && out.Detected > 0 {
+		b.WriteString("already up to date: every agent already matches the manifest.\n")
+	}
+	if c := out.Conflicts(); len(c) > 0 {
+		b.WriteString("error: name collision(s), these capabilities were NOT written: " +
+			strings.Join(c, ", ") + "\n")
+		b.WriteString("The user's own server has that name. Ask them to rename the capability " +
+			"or remove their server; do not overwrite it.\n")
+	}
+	if out.Detected == 0 {
 		b.WriteString("error: no agent config found. Install an agent, or ask the user to run capbus doctor.\n")
 	}
-	return b.String(), len(wrote) > 0 && len(syncErrs) == 0
+	if len(errs) > 0 || out.Failed() {
+		return b.String(), false
+	}
+	if len(out.Conflicts()) > 0 {
+		return b.String(), false
+	}
+	if out.Detected == 0 {
+		return b.String(), false
+	}
+	return b.String(), true
 }
 
 func (s *Server) status() string {

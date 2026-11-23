@@ -232,10 +232,11 @@ func TestSyncWritesEveryDetectedAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wrote, _, errs := Sync(capSet(), Options{})
-	if len(errs) > 0 {
-		t.Fatalf("errors: %v", errs)
+	out := Sync(capSet(), Options{})
+	if out.Failed() {
+		t.Fatalf("errors: %v", out.Errs)
 	}
+	wrote := out.Wrote
 	// claude + cursor + codex are single files; dsh writes two files.
 	if len(wrote) != 5 {
 		t.Fatalf("expected 5 files written, got %d: %v", len(wrote), wrote)
@@ -259,9 +260,9 @@ func TestSyncDryRunWritesNothing(t *testing.T) {
 	if err := os.WriteFile(p, []byte(`{}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	wrote, _, errs := Sync(capSet(), Options{DryRun: true})
-	if len(errs) > 0 || len(wrote) != 1 {
-		t.Fatalf("wrote=%v errs=%v", wrote, errs)
+	out := Sync(capSet(), Options{DryRun: true})
+	if out.Failed() || len(out.Wrote) != 1 {
+		t.Fatalf("wrote=%v errs=%v", out.Wrote, out.Errs)
 	}
 	b, _ := os.ReadFile(p)
 	if string(b) != `{}` {
@@ -293,8 +294,8 @@ func TestSyncKeepsUserServers(t *testing.T) {
 	if err := os.WriteFile(p, []byte(user), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, errs := Sync(capSet(), Options{}); len(errs) > 0 {
-		t.Fatalf("errors: %v", errs)
+	if out := Sync(capSet(), Options{}); out.Failed() {
+		t.Fatalf("errors: %v", out.Errs)
 	}
 
 	var got map[string]any
@@ -315,24 +316,48 @@ func TestSyncKeepsUserServers(t *testing.T) {
 	}
 }
 
-// A shim capbus wrote, for a capability no longer declared, is removed.
+// A shim capbus wrote, for a capability no longer declared, is removed - but
+// only because capbus has it in its ledger. "Shaped like capbus" alone is not
+// enough; see TestHandWrittenCapbusShapedEntrySurvives.
 func TestSyncRemovesOnlyItsOwn(t *testing.T) {
 	home := withHome(t)
 	p := filepath.Join(home, ".claude.json")
-	body := `{"mcpServers":{` +
-		`"old":{"command":"/x/capbus","args":["exec","old"]},` +
-		`"mine":{"command":"/usr/bin/mine"}}}`
-	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+	if err := os.WriteFile(p, []byte(`{}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, errs := Sync(capSet(), Options{}); len(errs) > 0 {
-		t.Fatalf("errors: %v", errs)
+
+	// Declare two capabilities so capbus writes and records both.
+	two := append(capSet(), manifest.Manifest{
+		Name: "old", Kind: manifest.KindMCP, Scope: manifest.ScopeGlobal,
+		Source: manifest.Source{Command: "/bin/true"},
+	})
+	if out := Sync(two, Options{}); out.Failed() {
+		t.Fatalf("first sync failed: %v", out.Errs)
 	}
 
+	// The user adds their own server.
 	var got map[string]any
 	b, _ := os.ReadFile(p)
-	_ = json.Unmarshal(b, &got)
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
 	servers, _ := got["mcpServers"].(map[string]any)
+	servers["mine"] = map[string]any{"command": "/usr/bin/mine"}
+	b, _ = json.Marshal(got)
+	if err := os.WriteFile(p, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Then "old" stops being declared.
+	if out := Sync(capSet(), Options{}); out.Failed() {
+		t.Fatalf("second sync failed: %v", out.Errs)
+	}
+
+	b, _ = os.ReadFile(p)
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	servers, _ = got["mcpServers"].(map[string]any)
 	if _, ok := servers["old"]; ok {
 		t.Fatal("capbus's own leftover was not removed")
 	}
@@ -350,10 +375,11 @@ func TestSyncSkipsNameCollision(t *testing.T) {
 	if err := os.WriteFile(p, []byte(user), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, changes, errs := Sync(capSet(), Options{})
-	if len(errs) > 0 {
-		t.Fatalf("errors: %v", errs)
+	synced := Sync(capSet(), Options{})
+	if synced.Failed() {
+		t.Fatalf("errors: %v", synced.Errs)
 	}
+	changes := synced.Changes
 	var got map[string]any
 	b, _ := os.ReadFile(p)
 	_ = json.Unmarshal(b, &got)

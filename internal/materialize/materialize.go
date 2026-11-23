@@ -29,7 +29,7 @@ type Options struct {
 type Change struct {
 	Agent  string
 	Name   string
-	Action string // added | updated | removed | unchanged | conflict
+	Action string // added | updated | removed | unchanged | kept | conflict
 	Detail string
 }
 
@@ -39,16 +39,11 @@ type Rendered struct {
 	Changes []Change
 }
 
-// Agent is one place capabilities have to be written. Every agent speaks its
-// own dialect; an adapter translates for it.
+// Agent is one place capabilities have to be written.
 type Agent interface {
 	Name() string
-	// Detect reports whether the agent is installed on this machine.
 	Detect() bool
-	// Location is the file, or the directory, this adapter writes.
 	Location() string
-	// Render returns the files to write. Key "" means Location itself is the
-	// file; any other key is a path relative to Location.
 	Render(ms []manifest.Manifest, opts Options) (Rendered, error)
 }
 
@@ -63,31 +58,25 @@ func selfExe() string {
 }
 
 // toEntryMap always produces a capbus shim rather than the capability's own
-// command. That keeps credentials out of agent configs entirely: the shim
-// resolves secrets at spawn time, in memory.
+// command. That keeps credentials out of agent configs entirely.
 func toEntryMap(m manifest.Manifest, opts Options, exe string) map[string]any {
 	verb := "exec"
-	// A capability marked shared must reach one process even when the user ran
-	// a plain sync: a second copy would be a second, silently divergent store.
 	if m.Shared || (opts.Shared && m.Scope == manifest.ScopeGlobal) {
 		verb = "bridge"
 	}
 	return map[string]any{"command": exe, "args": []any{verb, m.Name}}
 }
 
-// ours decides whether a server entry is a capbus shim by its shape rather than
-// by a marker written into someone else's config.
-//
-// A marker would pollute a file we do not own, and a marker we failed to write
-// would make capbus blind to its own leftovers. The shape is unambiguous: only
-// capbus writes `command: <.../capbus> args: [exec|bridge, <name>]`.
-func ours(e map[string]any) bool {
+// looksOurs decides whether a server entry has the shape this capbus writes:
+// the same executable, and an exec or bridge verb. Comparing against the
+// running binary rather than a hard-coded name keeps the check honest when
+// capbus is built under another name.
+func looksOurs(e map[string]any, exe string) bool {
 	cmd, _ := e["command"].(string)
-	if cmd == "" {
+	if cmd == "" || exe == "" {
 		return false
 	}
-	base := strings.TrimSuffix(strings.ToLower(filepath.Base(cmd)), ".exe")
-	if base != "capbus" {
+	if !strings.EqualFold(filepath.Base(cmd), filepath.Base(exe)) {
 		return false
 	}
 	switch args := e["args"].(type) {
@@ -106,16 +95,56 @@ func ours(e map[string]any) bool {
 	return false
 }
 
+// --- ledger: what capbus itself wrote ---------------------------------------
+
+// The shape alone is not enough to decide ownership: a user can write a capbus
+// shaped entry by hand, and deleting it because some manifest stopped declaring
+// that name would be a surprise. The ledger records the names capbus actually
+// wrote, per agent, so removal is exact.
+//
+// A missing ledger means "we have no evidence": nothing is removed, which
+// leaves an orphan rather than deleting something we cannot account for.
+func ledgerPath() string { return filepath.Join(home(), "written.json") }
+
+func loadLedger() map[string][]string {
+	out := map[string][]string{}
+	b, err := os.ReadFile(ledgerPath())
+	if err != nil {
+		return out
+	}
+	_ = json.Unmarshal(b, &out)
+	return out
+}
+
+func saveLedger(l map[string][]string) error {
+	if err := os.MkdirAll(home(), 0o755); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(l, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(ledgerPath(), append(b, '\n'), 0o600)
+}
+
+func ownedSet(l map[string][]string, agent string) map[string]bool {
+	set := map[string]bool{}
+	for _, n := range l[agent] {
+		set[n] = true
+	}
+	return set
+}
+
 // mergeServers applies the manifests to a server table already in the agent's
 // config. The rules, in order of how much they protect the user:
 //
 //  1. An entry capbus did not write is never modified or removed, whatever its
 //     name. If a manifest wants that name, the collision is reported and the
 //     manifest loses.
-//  2. An entry capbus did write is updated to match the manifest, or removed
-//     when the capability is no longer declared.
-//  3. Everything else is left byte for byte as it was.
-func mergeServers(existing map[string]any, ms []manifest.Manifest, opts Options, exe string) (map[string]any, []Change) {
+//  2. An entry capbus did write (shape and ledger) is updated to match the
+//     manifest, or removed when the capability is no longer declared.
+//  3. Everything else is left as it was.
+func mergeServers(existing map[string]any, ms []manifest.Manifest, opts Options, exe string, owned map[string]bool) (map[string]any, []Change) {
 	want := make(map[string]manifest.Manifest, len(ms))
 	for _, m := range ms {
 		want[m.Name] = m
@@ -128,27 +157,29 @@ func mergeServers(existing map[string]any, ms []manifest.Manifest, opts Options,
 
 	var changes []Change
 
-	// Remove what capbus wrote before but no longer declares.
 	for name, v := range existing {
 		if _, declared := want[name]; declared {
 			continue
 		}
 		tbl, ok := v.(map[string]any)
-		if !ok || !ours(tbl) {
-			// Someone else's entry: it stays, and a dry run says so, because
-			// "your own servers are still there" is the thing to check after a
-			// sync, not the absence of an error.
+		if !ok || !looksOurs(tbl, exe) {
 			if opts.DryRun {
 				changes = append(changes, Change{Name: name, Action: "kept",
 					Detail: "not written by capbus; left untouched"})
 			}
 			continue
 		}
+		if !owned[name] {
+			// Shaped like ours, but capbus has no record of writing it: a hand
+			// written entry, or an orphan from a capbus that kept no ledger.
+			changes = append(changes, Change{Name: name, Action: "kept",
+				Detail: "looks like a capbus entry but is not in capbus's ledger; left untouched"})
+			continue
+		}
 		delete(merged, name)
 		changes = append(changes, Change{Name: name, Action: "removed"})
 	}
 
-	// Apply the manifest.
 	for _, m := range ms {
 		next := toEntryMap(m, opts, exe)
 		cur, exists := merged[m.Name]
@@ -160,12 +191,12 @@ func mergeServers(existing map[string]any, ms []manifest.Manifest, opts Options,
 		curTbl, ok := cur.(map[string]any)
 		if !ok {
 			changes = append(changes, Change{Name: m.Name, Action: "conflict",
-				Detail: "同名条目不是 capbus 写的，且不是表结构；已跳过"})
+				Detail: "an entry with this name is not a table; left as it is, capability not written"})
 			continue
 		}
-		if !ours(curTbl) {
+		if !looksOurs(curTbl, exe) {
 			changes = append(changes, Change{Name: m.Name, Action: "conflict",
-				Detail: "同名条目不是 capbus 写的；已保留用户的，跳过这份清单"})
+				Detail: "an entry with this name was not written by capbus; kept, capability not written"})
 			continue
 		}
 		if sameEntry(curTbl, next) {
@@ -180,8 +211,8 @@ func mergeServers(existing map[string]any, ms []manifest.Manifest, opts Options,
 	return merged, changes
 }
 
-// sameEntry compares only the fields capbus owns, so an agent's own extra keys
-// on a capbus entry do not make it look changed on every run.
+// sameEntry compares the fields capbus owns, so an agent's own extra keys on a
+// capbus entry do not make it look changed on every run.
 func sameEntry(a, b map[string]any) bool {
 	ac, _ := a["command"].(string)
 	bc, _ := b["command"].(string)
@@ -216,33 +247,62 @@ type write struct {
 	agent string
 	path  string
 	body  []byte
-	prev  []byte // nil when the file did not exist
+	prev  []byte
 	had   bool
+}
+
+// Outcome is what a sync did, in the four states a caller needs to tell apart:
+// whether any agent was found at all, which files were written, what changed,
+// and what failed.
+type Outcome struct {
+	Detected int
+	Wrote    []string
+	Changes  []Change
+	Errs     []error
+}
+
+// Failed reports whether the sync could not finish. A sync that planned fine
+// and found nothing to change is not a failure.
+func (o Outcome) Failed() bool { return len(o.Errs) > 0 }
+
+// Conflicts lists the names whose manifest could not be written because
+// something else already owns that name.
+func (o Outcome) Conflicts() []string {
+	var out []string
+	for _, c := range o.Changes {
+		if c.Action == "conflict" {
+			out = append(out, c.Agent+"/"+c.Name)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Sync writes every detected agent's config.
 //
-// It plans every agent first and only then writes, so a render error in one
-// agent cannot leave another half-updated. Each file goes through a temporary
-// file and a rename, and a failure part-way restores every file already
-// touched — that is acceptance criteria 1 and 2 of the 2026-11-23 review.
-func Sync(ms []manifest.Manifest, opts Options) ([]string, []Change, []error) {
-	var errs []error
-	var changes []Change
+// It plans every agent first and writes only if the whole plan succeeded: a
+// single manifest or render error leaves every agent's config exactly as it
+// was. Each file goes through a temporary file and a rename, and a failure
+// part-way restores every file already touched.
+func Sync(ms []manifest.Manifest, opts Options) Outcome {
+	out := Outcome{}
+
 	var writes []write
 
 	for _, a := range Agents() {
 		if !a.Detect() {
 			continue
 		}
+		out.Detected++
+
 		r, err := a.Render(ms, opts)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", a.Name(), err))
+			out.Errs = append(out.Errs, fmt.Errorf("%s: %w", a.Name(), err))
 			continue
 		}
 		for _, c := range r.Changes {
 			c.Agent = a.Name()
-			changes = append(changes, c)
+			out.Changes = append(out.Changes, c)
 		}
 		keys := make([]string, 0, len(r.Files))
 		for k := range r.Files {
@@ -258,51 +318,79 @@ func Sync(ms []manifest.Manifest, opts Options) ([]string, []Change, []error) {
 		}
 	}
 
-	if opts.DryRun {
-		var planned []string
-		for _, w := range writes {
-			planned = append(planned, fmt.Sprintf("%s -> %s (dry-run)", w.agent, w.path))
+	sort.Slice(out.Changes, func(i, j int) bool {
+		if out.Changes[i].Agent != out.Changes[j].Agent {
+			return out.Changes[i].Agent < out.Changes[j].Agent
 		}
-		sort.Strings(planned)
-		sort.Slice(changes, func(i, j int) bool {
-			if changes[i].Agent != changes[j].Agent {
-				return changes[i].Agent < changes[j].Agent
-			}
-			return changes[i].Name < changes[j].Name
-		})
-		return planned, changes, errs
+		return out.Changes[i].Name < out.Changes[j].Name
+	})
+
+	// A plan that failed writes nothing. Writing the agents that happened to
+	// render would leave the machine in a state no single decision produced.
+	if len(out.Errs) > 0 {
+		return out
 	}
 
-	var wrote []string
+	if opts.DryRun {
+		for _, w := range writes {
+			out.Wrote = append(out.Wrote, fmt.Sprintf("%s -> %s (dry-run)", w.agent, w.path))
+		}
+		sort.Strings(out.Wrote)
+		return out
+	}
+
 	for i := range writes {
 		w := &writes[i]
-		if prev, err := os.ReadFile(w.path); err == nil {
+		prev, err := os.ReadFile(w.path)
+		switch {
+		case err == nil:
 			w.prev, w.had = prev, true
+		case os.IsNotExist(err):
+			// A new file: nothing to preserve.
+		default:
+			// We cannot read what is there, so we cannot promise to restore it.
+			// Stop before touching anything.
+			out.Errs = append(out.Errs, fmt.Errorf("%s: cannot read %s (refusing to overwrite it blind): %w",
+				w.agent, w.path, err))
+			rollback(writes[:i])
+			out.Wrote = nil
+			return out
 		}
-		if bytes.Equal(w.prev, w.body) {
+		if w.had && bytes.Equal(w.prev, w.body) {
 			continue
 		}
 		if err := os.MkdirAll(filepath.Dir(w.path), 0o755); err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", w.agent, err))
+			out.Errs = append(out.Errs, fmt.Errorf("%s: %w", w.agent, err))
 			rollback(writes[:i])
-			return wrote, changes, errs
+			out.Wrote = nil
+			return out
 		}
 		if err := writeAtomic(w.path, w.body); err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", w.agent, err))
+			out.Errs = append(out.Errs, fmt.Errorf("%s: %w", w.agent, err))
 			rollback(writes[:i])
-			return wrote, changes, errs
+			out.Wrote = nil
+			return out
 		}
-		wrote = append(wrote, fmt.Sprintf("%s -> %s", w.agent, w.path))
+		out.Wrote = append(out.Wrote, fmt.Sprintf("%s -> %s", w.agent, w.path))
 	}
 
-	sort.Strings(wrote)
-	sort.Slice(changes, func(i, j int) bool {
-		if changes[i].Agent != changes[j].Agent {
-			return changes[i].Agent < changes[j].Agent
+	// Only now is it true that capbus wrote these names.
+	next := map[string][]string{}
+	for _, a := range Agents() {
+		if !a.Detect() {
+			continue
 		}
-		return changes[i].Name < changes[j].Name
-	})
-	return wrote, changes, errs
+		names := make([]string, 0, len(ms))
+		for _, m := range ms {
+			names = append(names, m.Name)
+		}
+		sort.Strings(names)
+		next[a.Name()] = names
+	}
+	_ = saveLedger(next)
+
+	sort.Strings(out.Wrote)
+	return out
 }
 
 // writeAtomic replaces path in one step: a reader sees either the old file or
@@ -333,9 +421,7 @@ func writeAtomic(path string, body []byte) error {
 	return os.Rename(tmp, path)
 }
 
-// rollback puts every file in done back the way it was. It is best effort: the
-// caller is already returning an error, and a rollback that fails would only
-// hide the original one.
+// rollback puts every file in done back the way it was.
 func rollback(done []write) {
 	for i := len(done) - 1; i >= 0; i-- {
 		w := done[i]
@@ -352,7 +438,14 @@ func rollback(done []write) {
 func readJSONObject(path string) (map[string]any, error) {
 	root := map[string]any{}
 	b, err := os.ReadFile(path)
-	if err != nil || len(b) == 0 {
+	switch {
+	case os.IsNotExist(err):
+		return root, nil
+	case err != nil:
+		// Readable is a precondition for replacing it: an unreadable file is
+		// not an empty one, and overwriting it would lose whatever is inside.
+		return nil, fmt.Errorf("%s: cannot read the existing config (refusing to overwrite blind): %w", path, err)
+	case len(b) == 0:
 		return root, nil
 	}
 	b = bytes.TrimPrefix(b, utf8BOM)
