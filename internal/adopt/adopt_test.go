@@ -65,6 +65,66 @@ func TestMakeResolvesNativeAndProfile(t *testing.T) {
 	}
 }
 
+func TestProfilePatchRejectsAmbiguousProfiles(t *testing.T) {
+	home, _ := withNative(t)
+	writeFile(t, filepath.Join(home, ".dsh", "profiles", "aaa", "cordis.patch.yml"), "# another profile\n")
+
+	_, err := ProfilePatch()
+	if err == nil {
+		t.Fatal("multiple profiles must not be disambiguated by directory order")
+	}
+	if !strings.Contains(err.Error(), "aaa") || !strings.Contains(err.Error(), "desktop") || !strings.Contains(err.Error(), "--profile") {
+		t.Fatalf("error must list the choices and the selection flag: %v", err)
+	}
+}
+
+func TestPlanFromCapabilityInfersSingleProfile(t *testing.T) {
+	home, _ := withNative(t)
+	writeFile(t, filepath.Join(home, ".capbus", "capabilities", "demo.yaml"), `
+name: demo
+kind: mcp
+scope: global
+source:
+  command: /opt/demo
+`)
+
+	p, err := PlanFromCapability("demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Profile != "desktop" {
+		t.Fatalf("single-profile compatibility broke: %+v", p)
+	}
+}
+
+func TestPlanFromCapabilityUsesExplicitProfile(t *testing.T) {
+	home, _ := withNative(t)
+	writeFile(t, filepath.Join(home, ".dsh", "profiles", "aaa", "cordis.patch.yml"), "# another profile\n")
+	writeFile(t, filepath.Join(home, ".capbus", "capabilities", "demo.yaml"), `
+name: demo
+kind: mcp
+scope: global
+source:
+  command: /opt/demo
+`)
+
+	p, err := PlanFromCapability("demo", "desktop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Profile != "desktop" || p.Command != "/opt/demo" {
+		t.Fatalf("explicit profile was not honored: %+v", p)
+	}
+	if _, err := PlanFromCapability("demo", "missing"); err == nil || !strings.Contains(err.Error(), "missing") {
+		t.Fatalf("missing profile must be rejected by name: %v", err)
+	}
+	for _, invalid := range []string{".", "..", "../desktop", `..\desktop`} {
+		if _, err := PlanFromCapability("demo", invalid); err == nil {
+			t.Fatalf("path-like profile %q must not escape the profiles directory", invalid)
+		}
+	}
+}
+
 func TestMakeUsesProfileContainingNative(t *testing.T) {
 	home, _ := withNative(t)
 	writeFile(t, filepath.Join(home, ".dsh", "profiles", "aaa", "cordis.patch.yml"), "# another profile\n")

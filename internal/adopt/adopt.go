@@ -28,9 +28,9 @@ import (
 
 // Plan is everything the handover needs, computed before anything is written.
 type Plan struct {
-	Server string
-	Plugin string // DSH plugin that currently provides this server (adopt only)
-	RowID  string // kept for displaying what is being taken over
+	Server  string
+	Plugin  string // DSH plugin that currently provides this server (adopt only)
+	RowID   string // kept for displaying what is being taken over
 	Command string
 	Args    []string
 	Cwd     string
@@ -74,7 +74,11 @@ func ProfilePatch() (string, error) {
 		return live[0], nil
 	}
 	sort.Strings(live)
-	return live[0], nil
+	names := make([]string, 0, len(live))
+	for _, p := range live {
+		names = append(names, filepath.Base(filepath.Dir(p)))
+	}
+	return "", fmt.Errorf("multiple DSH profiles found (%s); use --profile to choose one", strings.Join(names, ", "))
 }
 
 // ProfileName returns the DSH profile directory name, e.g. "desktop".
@@ -88,6 +92,24 @@ func ProfileName() (string, error) {
 		return "", fmt.Errorf("cannot derive a profile name from %s", p)
 	}
 	return name, nil
+}
+
+func profileNameFor(requested string) (string, error) {
+	if requested == "" {
+		return ProfileName()
+	}
+	if requested == "." || requested == ".." || strings.ContainsAny(requested, `/\`) {
+		return "", fmt.Errorf("invalid DSH profile name %q", requested)
+	}
+	h, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	p := filepath.Join(h, ".dsh", "profiles", requested, "cordis.patch.yml")
+	if _, err := os.Stat(p); err != nil {
+		return "", fmt.Errorf("cannot use DSH profile %q: %w", requested, err)
+	}
+	return requested, nil
 }
 
 // Make finds the plugin that currently provides this MCP server and works out
@@ -162,12 +184,20 @@ func (p Plan) Manifest() manifest.Manifest {
 
 // PlanFromCapability builds a plan for a capability that capbus already owns,
 // with no native copy to disable. This is how a capability that was never
-// installed inside an agent gets into that agent.
+// installed inside an agent gets into that agent. An optional profile selects
+// the DSH target; without one, exactly one profile must be discoverable.
 //
 // A shared capability is injected through the bundle's bridge shim, never as
 // its own command: letting the agent spawn the server itself would create the
 // second instance that sharing exists to prevent.
-func PlanFromCapability(name string) (Plan, error) {
+func PlanFromCapability(name string, requested ...string) (Plan, error) {
+	if len(requested) > 1 {
+		return Plan{}, errors.New("at most one DSH profile may be selected")
+	}
+	selected := ""
+	if len(requested) == 1 {
+		selected = requested[0]
+	}
 	ms, _ := registry.Load()
 	var found *manifest.Manifest
 	for _, m := range ms {
@@ -180,7 +210,7 @@ func PlanFromCapability(name string) (Plan, error) {
 	if found == nil {
 		return Plan{}, fmt.Errorf("no capability named %q; declare it in %s first", name, registry.Dir())
 	}
-	profile, err := ProfileName()
+	profile, err := profileNameFor(selected)
 	if err != nil {
 		return Plan{}, err
 	}

@@ -131,7 +131,7 @@ usage:
   capbus undo                reverse the last adopt
   capbus ui [--no-open]      open the local dashboard
   capbus api state|toggle    machine interface for editor and shell integrations
-  capbus inject [--apply] <name>  put a capbus capability into the agent profile
+  capbus inject [--profile NAME] [--apply] <name>  put a capbus capability into the agent profile
   capbus version
 
   --shared  point global capabilities at the shared backend instead of
@@ -1457,14 +1457,24 @@ func requiredShared(ms []manifest.Manifest) []string {
 
 // injectCmd puts a capability capbus already owns into the agent's profile
 // patch. The difference from adopt: there is no plugin to switch off, because
-// nothing installed this one except capbus.
+// nothing installed this one except capbus. --profile selects the DSH target
+// explicitly; without it, auto-discovery accepts exactly one profile.
 func injectCmd(args []string) int {
 	apply := false
+	profile := ""
 	name := ""
-	for _, a := range args {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
 		switch {
 		case a == "--apply":
 			apply = true
+		case a == "--profile":
+			if i+1 >= len(args) || args[i+1] == "" {
+				fmt.Fprintln(os.Stderr, "capbus inject: --profile needs a profile name")
+				return 2
+			}
+			i++
+			profile = args[i]
 		case strings.HasPrefix(a, "-"):
 			fmt.Fprintf(os.Stderr, "capbus inject: unknown flag %q\n", a)
 			return 2
@@ -1473,11 +1483,11 @@ func injectCmd(args []string) int {
 		}
 	}
 	if name == "" {
-		fmt.Fprintln(os.Stderr, "usage: capbus inject [--apply] <capability>")
+		fmt.Fprintln(os.Stderr, "usage: capbus inject [--profile NAME] [--apply] <capability>")
 		return 2
 	}
 
-	pl, err := adopt.PlanFromCapability(name)
+	pl, err := adopt.PlanFromCapability(name, profile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "capbus inject: %v\n", err)
 		return 1
