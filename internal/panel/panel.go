@@ -226,6 +226,9 @@ func (s *Server) Serve() error {
 				Path:     "/",
 				HttpOnly: true,
 				SameSite: http.SameSiteStrictMode,
+				// codeql[go/cookie-secure-not-set]: New binds this server to
+				// loopback HTTP; Secure would break the local session cookie.
+				Secure: false,
 			})
 			http.Redirect(w, r, "/", http.StatusSeeOther)
 			return
