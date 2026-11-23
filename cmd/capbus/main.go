@@ -319,18 +319,24 @@ func syncCmd(args []string) int {
 			return 1
 		}
 	}
-	wrote, syncErrs := materialize.Sync(ms, opts)
+	wrote, changes, syncErrs := materialize.Sync(ms, opts)
 	for _, e := range syncErrs {
 		fmt.Fprintf(os.Stderr, "! %v\n", e)
 	}
+	printChanges(changes, opts.DryRun)
 	if len(wrote) == 0 {
 		if len(syncErrs) == 0 {
 			fmt.Println(i18n.T("no agent config found - install an agent, or run `capbus doctor`"))
 		}
 		return 1
 	}
-	for _, w := range wrote {
-		fmt.Println(i18n.T("wrote") + " " + w)
+	if opts.DryRun {
+		fmt.Println()
+		fmt.Println(i18n.T("dry run: nothing was written; drop --dry-run to apply"))
+	} else {
+		for _, w := range wrote {
+			fmt.Println(i18n.T("wrote") + " " + w)
+		}
 	}
 	_ = audit.Append("sync", fmt.Sprintf("%d capabilities -> %d files", len(ms), len(wrote)))
 	if len(ms) > 0 {
@@ -1481,4 +1487,43 @@ func logCmd(args []string) int {
 	fmt.Println()
 	fmt.Println(i18n.T("log file: ") + audit.Path())
 	return 0
+}
+
+// printChanges reports what sync did to each server, in words a person can
+// check against their own config. Symbols are ASCII so a GBK console shows them.
+//
+// "unchanged" is only worth printing in a dry run: on a normal sync it would
+// repeat every capability on every run.
+func printChanges(changes []materialize.Change, verbose bool) {
+	last := "\x00"
+	printed := 0
+	for _, c := range changes {
+		if c.Action == "unchanged" && !verbose {
+			continue
+		}
+		if c.Agent != last {
+			fmt.Println("  [" + c.Agent + "]")
+			last = c.Agent
+		}
+		sym := "="
+		switch c.Action {
+		case "added", "written":
+			sym = "+"
+		case "updated":
+			sym = "~"
+		case "removed":
+			sym = "-"
+		case "conflict":
+			sym = "!"
+		}
+		line := "    " + sym + " " + c.Name
+		if c.Detail != "" {
+			line += "  (" + c.Detail + ")"
+		}
+		fmt.Println(line)
+		printed++
+	}
+	if printed > 0 {
+		fmt.Println()
+	}
 }

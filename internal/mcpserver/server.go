@@ -183,7 +183,7 @@ func (s *Server) sync(shared bool) (string, bool) {
 		}
 		break
 	}
-	wrote, syncErrs := materialize.Sync(effective, materialize.Options{Shared: shared})
+	wrote, _, syncErrs := materialize.Sync(effective, materialize.Options{Shared: shared})
 	var b strings.Builder
 	for _, w := range wrote {
 		b.WriteString("wrote " + w + "\n")

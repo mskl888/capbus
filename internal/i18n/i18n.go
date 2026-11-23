@@ -142,4 +142,5 @@ var zh = map[string]string{
 	"action log cleared":                                               "动作记录已清空",
 	"capbus has not changed anything yet":                              "capbus 还没有改动过任何东西",
 	"log file: ":                                                       "记录文件：",
+	"dry run: nothing was written; drop --dry-run to apply":            "演练：没有写入任何文件；去掉 --dry-run 才会真的写",
 }
